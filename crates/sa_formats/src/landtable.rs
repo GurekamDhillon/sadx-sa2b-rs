@@ -120,6 +120,7 @@ fn sniff_visual(b: &Bytes, map: &dyn AddressMap, col: usize) -> Result<ModelKind
 fn append(out: &mut Mesh, m: Mesh) {
     let base = out.positions.len() as u32;
     let first = out.indices.len() as u32;
+    out.src_slot.extend(m.src_slot);
     out.positions.extend(m.positions);
     out.normals.extend(m.normals);
     out.uvs.extend(m.uvs);

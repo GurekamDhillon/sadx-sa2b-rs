@@ -73,6 +73,14 @@ pub struct Body {
 }
 
 impl Body {
+    /// Rotation (BAMS x, y, z) to draw the model with. SA2's `Sonic_Display`
+    /// (0x720090) rotates Z, then X, then Y by `0x8000 - heading`: the model
+    /// faces the opposite way to the physics forward axis, so the heading gets
+    /// a half turn when drawing.
+    pub fn display_rotation(&self) -> [i32; 3] {
+        [self.rotation[0], 0x8000 - self.rotation[1], self.rotation[2]]
+    }
+
     pub fn new(physics: PhysicsData) -> Body {
         Body {
             rotation: [0; 3],
@@ -564,6 +572,13 @@ mod tests {
         b.integrate_speed(true, 0);
         assert!(b.velocity.x.abs() <= 16.0 && b.velocity.z.abs() <= 16.0);
         assert!(b.velocity.x.abs() > 15.9 && b.velocity.z.abs() > 15.9, "box clamp keeps both axes at the cap: {:?}", b.velocity);
+    }
+
+    #[test]
+    fn display_rotation_adds_the_half_turn() {
+        let mut b = Body::new(sonic_like());
+        b.rotation = [0x100, 0x2000, -0x80];
+        assert_eq!(b.display_rotation(), [0x100, 0x6000, -0x80]);
     }
 
     #[test]

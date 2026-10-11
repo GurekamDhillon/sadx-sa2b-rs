@@ -73,3 +73,31 @@ fn chao_gardens_and_city_escape_load() {
     let city = g.landtable(&catalog::sa2_stage_landtable(13)).unwrap();
     assert!(city.collision_mesh().indices.len() / 3 > 1000);
 }
+
+fn longest_edge(m: &sa_formats::ninja::Mesh) -> f32 {
+    m.indices
+        .chunks(3)
+        .flat_map(|t| [(0, 1), (1, 2), (2, 0)].map(|(a, b)| (t[a] as usize, t[b] as usize)))
+        .map(|(a, b)| {
+            let (p, q) = (m.positions[a], m.positions[b]);
+            ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2)).sqrt()
+        })
+        .fold(0.0, f32::max)
+}
+
+/// Regression: skinned limbs must stay attached. A wrong vertex-cache draw
+/// order once stretched triangles across the whole body (edges over 6 units
+/// on a 10-unit character); correct skinning keeps every edge under 2.5.
+#[test]
+fn sonic_skin_stays_attached_in_every_pose() {
+    let g = game();
+    let rig = g.character_rig(Character::Sonic, Costume::Default).unwrap();
+    for (state, frames) in [(sa_data::anim::state::STAND, [0.0, 4.0]), (sa_data::anim::state::RUN, [0.0, 7.0]), (sa_data::anim::state::JOG, [3.0, 15.0]), (sa_data::anim::state::JUMP, [0.0, 2.0])] {
+        for f in frames {
+            let mesh = rig.mesh(state, f).unwrap_or_else(|| panic!("no mesh for state {state}"));
+            assert!(mesh.triangle_count() > 500, "state {state}: {} triangles", mesh.triangle_count());
+            let e = longest_edge(&mesh);
+            assert!(e < 2.5, "state {state} frame {f}: longest edge {e}");
+        }
+    }
+}

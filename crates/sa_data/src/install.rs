@@ -162,6 +162,11 @@ impl Game {
         Ok(LandTable::read_sa2(&data, &pe, off)?)
     }
 
+    /// Path of the game executable.
+    pub fn exe_path(&self) -> PathBuf {
+        self.exe.clone()
+    }
+
     /// Path of the main Chao save (`SONIC2B__ALF`), whether or not it exists.
     pub fn chao_save_path(&self) -> PathBuf {
         self.data_dir().join("SAVEDATA").join("SONIC2B__ALF")

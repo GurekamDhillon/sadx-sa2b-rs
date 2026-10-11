@@ -18,6 +18,8 @@ pub struct SubMesh {
 /// Triangle list. Every corner has its own vertex (no sharing between strips).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Mesh {
+    /// Diagnostics: cache slot each vertex was read from (`u32::MAX` if none).
+    pub src_slot: Vec<u32>,
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
@@ -43,6 +45,7 @@ impl Mesh {
     }
 
     fn push(&mut self, p: [f32; 3], n: [f32; 3], uv: [f32; 2]) -> u32 {
+        self.src_slot.push(u32::MAX);
         self.positions.push(p);
         self.normals.push(n);
         self.uvs.push(uv);
@@ -69,25 +72,100 @@ struct CacheVertex {
     normal: [f32; 3],
 }
 
-/// Flattens `root` with every node in its rest pose.
+/// Flattens `root` in whatever pose its node transforms describe.
+///
+/// Chunk models skin across nodes through a shared vertex cache. A node's
+/// vertex chunks are written (already transformed by that node) when the node
+/// is entered. A node with both vertices and polygons is drawn at once. A
+/// polygon-only "skin" node is drawn at the first moment every slot it uses
+/// has been written and no weighted blend into it is still open (Start or
+/// Middle seen, End not yet). Chosen by replaying the cache over
+/// `sonicmdl.prs`: it picks the least-stretched moment for every skin node,
+/// where drawing on entry or after the whole subtree does not.
 pub fn flatten(root: &Node) -> Mesh {
-    let mut mesh = Mesh::default();
-    let mut cache: Vec<CacheVertex> = Vec::new();
-    root.walk(&Mat4::IDENTITY, &mut |node, world| {
-        if node.flags & eval::HIDE != 0 {
-            return;
-        }
-        match &node.attach {
-            Some(Attach::Chunk(m)) => chunk(&mut mesh, &mut cache, m, world),
-            Some(Attach::Basic(m)) => basic(&mut mesh, m, world),
-            Some(Attach::Gc(m)) => gc(&mut mesh, m, world),
-            None => {}
-        }
-    });
-    mesh
+    let mut ctx = Ctx { mesh: Mesh::default(), cache: Vec::new(), state: Vec::new(), clock: 0, pending: Vec::new() };
+    visit(root, &Mat4::IDENTITY, &mut ctx);
+    ctx.flush(true);
+    ctx.mesh
 }
 
-fn chunk(mesh: &mut Mesh, cache: &mut Vec<CacheVertex>, m: &ChunkModel, world: &Mat4) {
+/// Cache slot state: never written, blend still open, final.
+const UNWRITTEN: u8 = 0;
+const OPEN: u8 = 1;
+const FINAL: u8 = 2;
+
+struct Skin<'a> {
+    model: &'a ChunkModel,
+    world: Mat4,
+    slots: Vec<usize>,
+    /// Value of `Ctx::clock` when the node was entered.
+    entered: u32,
+}
+
+struct Ctx<'a> {
+    mesh: Mesh,
+    cache: Vec<CacheVertex>,
+    /// Per slot: state (`UNWRITTEN`/`OPEN`/`FINAL`) and the clock of its last write.
+    state: Vec<(u8, u32)>,
+    clock: u32,
+    pending: Vec<Skin<'a>>,
+}
+
+impl<'a> Ctx<'a> {
+    /// Draws pending skin nodes whose slots have all been rewritten since the
+    /// node was entered and are final (all of them if `force`).
+    fn flush(&mut self, force: bool) {
+        let mut i = 0;
+        while i < self.pending.len() {
+            let entered = self.pending[i].entered;
+            let ready = force || self.pending[i].slots.iter().all(|&s| matches!(self.state.get(s), Some(&(FINAL, at)) if at > entered));
+            if ready {
+                let s = self.pending.remove(i);
+                chunk_polys(&mut self.mesh, &self.cache, s.model, &s.world);
+            } else {
+                i += 1;
+            }
+        }
+    }
+}
+
+fn strip_slots(m: &ChunkModel) -> Vec<usize> {
+    let mut v: Vec<usize> = m.poly_chunks.iter().filter_map(|p| if let PolyChunk::Strip { strips, .. } = p { Some(strips) } else { None }).flatten().flat_map(|s| s.vertices.iter().map(|v| v.index as usize)).collect();
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
+fn visit<'a>(node: &'a Node, parent: &Mat4, ctx: &mut Ctx<'a>) {
+    let world = parent.mul(&node.local_matrix());
+    let hidden = node.flags & eval::HIDE != 0;
+    ctx.clock += 1;
+    let entered = ctx.clock;
+    match &node.attach {
+        Some(Attach::Chunk(m)) => {
+            chunk_vertices(&mut ctx.cache, &mut ctx.state, ctx.clock, m, &world);
+            let has_polys = m.poly_chunks.iter().any(|p| matches!(p, PolyChunk::Strip { .. }));
+            if has_polys && !hidden {
+                if m.vertex_chunks.is_empty() {
+                    ctx.pending.push(Skin { model: m, world, slots: strip_slots(m), entered });
+                } else {
+                    chunk_polys(&mut ctx.mesh, &ctx.cache, m, &world);
+                }
+            }
+        }
+        Some(Attach::Basic(m)) if !hidden => basic(&mut ctx.mesh, m, &world),
+        Some(Attach::Gc(m)) if !hidden => gc(&mut ctx.mesh, m, &world),
+        _ => {}
+    }
+    ctx.flush(false);
+    if node.flags & eval::BREAK == 0 {
+        for c in &node.children {
+            visit(c, &world, ctx);
+        }
+    }
+}
+
+fn chunk_vertices(cache: &mut Vec<CacheVertex>, state: &mut Vec<(u8, u32)>, clock: u32, m: &ChunkModel, world: &Mat4) {
     for vc in &m.vertex_chunks {
         let ws = vc.weight_status();
         for (i, v) in vc.vertices.iter().enumerate() {
@@ -97,7 +175,15 @@ fn chunk(mesh: &mut Mesh, cache: &mut Vec<CacheVertex>, m: &ChunkModel, world: &
             };
             if slot >= cache.len() {
                 cache.resize(slot + 1, CacheVertex::default());
+                state.resize(slot + 1, (UNWRITTEN, 0));
             }
+            state[slot] = (
+                match ws {
+                    Some(WeightStatus::Start) | Some(WeightStatus::Middle) => OPEN,
+                    _ => FINAL,
+                },
+                clock,
+            );
             let p = world.point(v.position);
             let n = world.normal(v.normal.unwrap_or([0., 1., 0.]));
             let e = &mut cache[slot];
@@ -115,6 +201,9 @@ fn chunk(mesh: &mut Mesh, cache: &mut Vec<CacheVertex>, m: &ChunkModel, world: &
             }
         }
     }
+}
+
+fn chunk_polys(mesh: &mut Mesh, cache: &[CacheVertex], m: &ChunkModel, world: &Mat4) {
     let mut texture = None;
     for pc in &m.poly_chunks {
         match pc {
@@ -127,7 +216,9 @@ fn chunk(mesh: &mut Mesh, cache: &mut Vec<CacheVertex>, m: &ChunkModel, world: &
                         .iter()
                         .map(|sv| {
                             let c = cache.get(sv.index as usize).copied().unwrap_or_default();
-                            mesh.push(c.pos, sv.normal.map(|n| world.normal(n)).unwrap_or(c.normal), sv.uv.unwrap_or([0., 0.]))
+                            let id = mesh.push(c.pos, sv.normal.map(|n| world.normal(n)).unwrap_or(c.normal), sv.uv.unwrap_or([0., 0.]));
+                            mesh.src_slot[id as usize] = sv.index as u32;
+                            id
                         })
                         .collect();
                     strip_tris(mesh, &ids, s.reversed);

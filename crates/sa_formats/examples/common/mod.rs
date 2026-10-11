@@ -1,16 +1,29 @@
 pub fn render(mesh: &sa_formats::ninja::Mesh, path: &str, top: bool) {
-    let (lo, hi) = mesh.bounds().unwrap();
     let (w, h) = (400usize, 400usize);
+    let rgb = render_rgb(mesh, w, h, top, None);
+    std::fs::write(path, png(w as u32, h as u32, &rgb)).unwrap();
+}
+
+/// Software-render `mesh` to an RGB buffer. `camera` = (centre x, centre y, span) in
+/// the projected plane; `None` fits the mesh.
+pub fn render_rgb(mesh: &sa_formats::ninja::Mesh, w: usize, h: usize, top: bool, camera: Option<(f32, f32, f32)>) -> Vec<u8> {
+    let (lo, hi) = mesh.bounds().unwrap();
     let mut img = vec![30u8; w * h * 3];
     let mut zb = vec![f32::MIN; w * h];
-    let pick = |p: [f32; 3]| if top { [p[0], -p[2], p[1]] } else { p };
+    let side = std::env::var("VIEW").map(|v| v == "side").unwrap_or(false);
+    let pick = |p: [f32; 3]| if top { [p[0], -p[2], p[1]] } else if side { [-p[2], p[1], p[0]] } else { p };
+    let mut tri_color = vec![[200u8, 200, 190]; mesh.indices.len() / 3];
+    let palette = [[230u8, 90, 80], [90, 200, 110], [90, 140, 240], [240, 210, 80], [200, 110, 230], [90, 220, 220], [250, 150, 60], [180, 180, 180]];
+    for (si, sm) in mesh.submeshes.iter().enumerate() {
+        for t in (sm.first_index / 3)..((sm.first_index + sm.index_count) / 3) {
+            tri_color[t as usize] = palette[si % palette.len()];
+        }
+    }
     let (lo, hi) = (pick(lo), pick(hi));
     let (lo, hi) = ([lo[0].min(hi[0]), lo[1].min(hi[1]), 0.0], [lo[0].max(hi[0]), lo[1].max(hi[1]), 0.0]);
-    let span = (hi[0] - lo[0]).max(hi[1] - lo[1]) * 1.05;
-    let cx = (hi[0] + lo[0]) / 2.0;
-    let cy = (hi[1] + lo[1]) / 2.0;
+    let (cx, cy, span) = camera.unwrap_or(((hi[0] + lo[0]) / 2.0, (hi[1] + lo[1]) / 2.0, (hi[0] - lo[0]).max(hi[1] - lo[1]) * 1.05));
     let proj = |p: [f32; 3]| { let p = pick(p); (((p[0] - cx) / span + 0.5) * w as f32, ((cy - p[1]) / span + 0.5) * h as f32, p[2]) };
-    for t in mesh.indices.chunks(3) {
+    for (ti, t) in mesh.indices.chunks(3).enumerate() {
         let v: Vec<_> = t.iter().map(|&i| proj(mesh.positions[i as usize])).collect();
         let n = mesh.normals[t[0] as usize];
         let shade = (60.0 + 190.0 * (0.3 * n[0] + 0.5 * n[1] + 0.8 * n[2]).abs().min(1.0)) as u8;
@@ -24,10 +37,12 @@ pub fn render(mesh: &sa_formats::ninja::Mesh, path: &str, top: bool) {
             let (w0, w1, w2) = (e(v[1], v[2]), e(v[2], v[0]), e(v[0], v[1]));
             if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 { continue; }
             let z = w0 * v[0].2 + w1 * v[1].2 + w2 * v[2].2;
-            if z > zb[y * w + x] { zb[y * w + x] = z; img[(y * w + x) * 3..][..3].copy_from_slice(&[shade, shade, (shade as u16 * 9 / 10) as u8]); }
+            if z > zb[y * w + x] { zb[y * w + x] = z; let c = tri_color[ti];
+            let f = |v: u8| (v as u16 * shade as u16 / 255) as u8;
+            img[(y * w + x) * 3..][..3].copy_from_slice(&[f(c[0]), f(c[1]), f(c[2])]); }
         }}
     }
-    std::fs::write(path, png(w as u32, h as u32, &img)).unwrap();
+    img
 }
 
 pub fn png(w: u32, h: u32, rgb: &[u8]) -> Vec<u8> {

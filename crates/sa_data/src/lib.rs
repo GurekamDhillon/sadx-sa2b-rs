@@ -9,6 +9,8 @@ pub mod enums;
 pub mod error;
 pub mod install;
 pub mod physics;
+pub mod rig;
 
 pub use error::{Error, Result};
 pub use install::{Game, GameKind};
+pub use rig::Rig;

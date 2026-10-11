@@ -1,14 +1,13 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+//! Game knowledge for Sonic Adventure 2 and Sonic Adventure DX, built on
+//! `sa_formats`: install detection, physics tables, enums, the character
+//! asset catalog and the Chao save format.
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub mod catalog;
+pub mod chao_save;
+pub mod enums;
+pub mod error;
+pub mod install;
+pub mod physics;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub use error::{Error, Result};
+pub use install::{Game, GameKind};

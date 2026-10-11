@@ -1,6 +1,14 @@
 [package]
 name = "sa_data"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
+sa_formats = { path = "../sa_formats" }
+thiserror.workspace = true
+sha2.workspace = true
+
+[features]
+# Tests that read a real install from SA2_DIR / SADX_DIR.
+game-tests = []

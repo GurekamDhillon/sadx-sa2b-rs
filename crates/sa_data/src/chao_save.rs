@@ -167,6 +167,38 @@ impl Chao {
     pub fn stat_fraction(&self, s: ChaoStat) -> u8 {
         self.raw[off::STAT_FRACTIONS + s as usize]
     }
+    pub fn set_stat_fraction(&mut self, s: ChaoStat, v: u8) {
+        self.raw[off::STAT_FRACTIONS + s as usize] = v;
+    }
+    pub fn set_power_run(&mut self, v: f32) {
+        self.set_f32(off::POWER_RUN, v);
+    }
+    pub fn set_fly_swim(&mut self, v: f32) {
+        self.set_f32(off::FLY_SWIM, v);
+    }
+    pub fn set_lifespan(&mut self, v: i16) {
+        self.set_u16(off::LIFESPAN, v as u16);
+    }
+    pub fn set_reincarnations(&mut self, v: i16) {
+        self.set_u16(off::REINCARNATIONS, v as u16);
+    }
+    pub fn last_life_alignment(&self) -> f32 {
+        self.f32(off::LAST_LIFE_ALIGNMENT)
+    }
+    pub fn set_last_life_alignment(&mut self, v: f32) {
+        self.set_f32(off::LAST_LIFE_ALIGNMENT, v);
+    }
+    /// `SA2AnimalBehavior` (+0x118): one bit per animal absorbed (behaviour learnt).
+    pub fn animal_behavior(&self) -> u32 {
+        self.u32(off::ANIMAL_BEHAVIOR)
+    }
+    pub fn set_animal_behavior(&mut self, v: u32) {
+        self.raw[off::ANIMAL_BEHAVIOR..off::ANIMAL_BEHAVIOR + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    pub fn set_seed(&mut self, v: u32) {
+        self.raw[off::SEED..off::SEED + 4].copy_from_slice(&v.to_le_bytes());
+    }
+
     pub fn set_stat(&mut self, s: ChaoStat, grade: u8, level: u8, points: u16) {
         self.raw[off::STAT_GRADES + s as usize] = grade;
         self.raw[off::STAT_LEVELS + s as usize] = level;

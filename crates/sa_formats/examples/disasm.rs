@@ -185,6 +185,25 @@ fn main() {
                 prev = Some(ins);
             }
         }
+        "near" => {
+            // near <lo> <hi> <mnemA> <immA> <mnemB> <immB> <window>: both within window instrs.
+            let (lo, hi) = (hex(&a[3]), hex(&a[4]));
+            let (ma, ia, mb, ib) = (a[5].to_lowercase(), hex(&a[6]), a[7].to_lowercase(), hex(&a[8]));
+            let win: usize = a[9].parse().unwrap();
+            let start = (lo - base) as usize;
+            let end = ((hi - base) as usize).min(code.len());
+            let mut d = Decoder::with_ip(32, &code[start..end], lo, DecoderOptions::NONE);
+            let has = |ins: &Instruction, m: &str, v: u64| format!("{:?}", ins.mnemonic()).to_lowercase() == m && (0..ins.op_count()).any(|i| matches!(ins.op_kind(i), OpKind::Immediate8 | OpKind::Immediate16 | OpKind::Immediate32 | OpKind::Immediate8to32 | OpKind::Immediate8to16) && ins.immediate(i) == v);
+            let mut w: Vec<Instruction> = Vec::new();
+            while d.can_decode() {
+                let ins = d.decode();
+                if has(&ins, &mb, ib) {
+                    if let Some(x) = w.iter().find(|x| has(x, &ma, ia)) { println!("{:#x} .. {:#x}", x.ip(), ins.ip()); }
+                }
+                w.push(ins);
+                if w.len() > win { w.remove(0); }
+            }
+        }
         "k" => {
             for s in &a[3..] {
                 let addr = hex(s) as u32;

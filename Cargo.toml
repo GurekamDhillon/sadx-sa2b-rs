@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/sa_formats", "crates/sa_data", "crates/sa_controller", "crates/chao_sim", "crates/sa_ffi"]
+members = ["crates/sa_formats", "crates/sa_data", "crates/sa_controller", "crates/chao_sim", "crates/sa_ffi", "crates/sa_demo"]
 
 [workspace.package]
 edition = "2021"
@@ -9,3 +9,7 @@ license = "MIT"
 [workspace.dependencies]
 thiserror = "2"
 sha2 = "0.10"
+
+# Bevy is slow to build unoptimised; optimise dependencies even in dev builds.
+[profile.dev.package."*"]
+opt-level = 2

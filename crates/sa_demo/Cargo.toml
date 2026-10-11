@@ -1,0 +1,12 @@
+[package]
+name = "sa_demo"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+sa_data = { path = "../sa_data" }
+sa_formats = { path = "../sa_formats" }
+sa_controller = { path = "../sa_controller" }
+bevy = "0.16"

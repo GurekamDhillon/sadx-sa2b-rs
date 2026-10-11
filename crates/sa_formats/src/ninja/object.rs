@@ -5,6 +5,7 @@
 
 use super::basic::{self, BasicModel, BasicVariant};
 use super::chunk::{self, ChunkModel};
+use super::gc::{self, GcModel};
 use super::math::{bams_to_radians, Mat4};
 use crate::bytes::{AddressMap, Bytes};
 use crate::error::{invalid, Result};
@@ -23,12 +24,14 @@ pub mod eval {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelKind {
     Chunk,
+    Gc,
     Basic(BasicVariant),
 }
 
 #[derive(Debug, Clone)]
 pub enum Attach {
     Chunk(ChunkModel),
+    Gc(GcModel),
     Basic(BasicModel),
 }
 
@@ -110,6 +113,7 @@ fn read_siblings(b: &Bytes, map: &dyn AddressMap, mut off: usize, kind: ModelKin
             None => None,
             Some(a) => Some(match kind {
                 ModelKind::Chunk => Attach::Chunk(chunk::read_model(b, map, a)?),
+                ModelKind::Gc => Attach::Gc(gc::read_model(b, map, a)?),
                 ModelKind::Basic(v) => Attach::Basic(basic::read_model(b, map, a, v)?),
             }),
         };

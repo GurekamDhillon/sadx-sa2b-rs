@@ -2,6 +2,7 @@
 
 use super::basic::{BasicModel, PolyType};
 use super::chunk::{ChunkModel, PolyChunk, WeightStatus};
+use super::gc::{GcModel, PrimitiveKind};
 use super::math::Mat4;
 use super::object::{eval, Attach, Node};
 
@@ -79,6 +80,7 @@ pub fn flatten(root: &Node) -> Mesh {
         match &node.attach {
             Some(Attach::Chunk(m)) => chunk(&mut mesh, &mut cache, m, world),
             Some(Attach::Basic(m)) => basic(&mut mesh, m, world),
+            Some(Attach::Gc(m)) => gc(&mut mesh, m, world),
             None => {}
         }
     });
@@ -146,6 +148,37 @@ fn strip_tris(mesh: &mut Mesh, ids: &[u32], reversed: bool) {
             mesh.tri(b, a, c);
         } else {
             mesh.tri(a, b, c);
+        }
+    }
+}
+
+fn gc(mesh: &mut Mesh, m: &GcModel, world: &Mat4) {
+    for gm in &m.meshes {
+        mesh.begin(gm.texture_id.map(|t| t as u32));
+        for prim in &gm.primitives {
+            let ids: Vec<u32> = prim
+                .corners
+                .iter()
+                .map(|c| {
+                    let p = m.positions.get(c.position as usize).copied().unwrap_or_default();
+                    let n = c.normal.and_then(|i| m.normals.get(i as usize).copied()).unwrap_or([0., 1., 0.]);
+                    let uv = c.uv.and_then(|i| m.uvs.get(i as usize).copied()).unwrap_or([0., 0.]);
+                    mesh.push(world.point(p), world.normal(n), uv)
+                })
+                .collect();
+            match prim.kind {
+                PrimitiveKind::Triangles => {
+                    for t in ids.chunks_exact(3) {
+                        mesh.tri(t[0], t[1], t[2]);
+                    }
+                }
+                PrimitiveKind::TriangleStrip => strip_tris(mesh, &ids, false),
+                PrimitiveKind::TriangleFan => {
+                    for i in 1..ids.len().saturating_sub(1) {
+                        mesh.tri(ids[0], ids[i], ids[i + 1]);
+                    }
+                }
+            }
         }
     }
 }

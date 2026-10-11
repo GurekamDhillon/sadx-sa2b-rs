@@ -3,6 +3,7 @@
 pub mod basic;
 pub mod chunk;
 pub mod flatten;
+pub mod gc;
 pub mod math;
 pub mod motion;
 pub mod object;

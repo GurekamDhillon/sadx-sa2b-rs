@@ -4,6 +4,7 @@
 
 pub mod bytes;
 pub mod error;
+pub mod landtable;
 pub mod ninja;
 pub mod pak;
 pub mod pe;

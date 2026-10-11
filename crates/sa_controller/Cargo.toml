@@ -1,0 +1,13 @@
+[package]
+name = "sa_controller"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sa_data = { path = "../sa_data" }
+sa_formats = { path = "../sa_formats" }
+
+[features]
+# Tests that load real collision from SA2_DIR.
+game-tests = []

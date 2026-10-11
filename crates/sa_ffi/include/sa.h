@@ -51,6 +51,16 @@
 
 #define SA_CHAO_SLOT_COUNT 37
 
+#define SA_ACTION_STAND 0
+
+#define SA_ACTION_RUN 1
+
+#define SA_ACTION_JUMP 2
+
+#define SA_ACTION_FALL 3
+
+#define SA_ACTION_HURT 4
+
 typedef enum SaStatus {
   SA_STATUS_OK = 0,
   SA_STATUS_NULL_ARGUMENT = 1,
@@ -75,8 +85,14 @@ typedef struct SaGame SaGame;
 // Opaque flattened triangle mesh.
 typedef struct SaMesh SaMesh;
 
+// Opaque controlled character.
+typedef struct SaPlayer SaPlayer;
+
 // Opaque list of decoded RGBA8 textures.
 typedef struct SaTextureList SaTextureList;
+
+// Opaque collision world.
+typedef struct SaWorld SaWorld;
 
 // Character physics (`PhysicsData`, same layout as the game's 0x84 bytes).
 typedef struct SaPhysics {
@@ -185,6 +201,50 @@ typedef struct SaChao {
   uint32_t classroom_flags;
 } SaChao;
 
+// Ground query result written by an `SaGroundFn` callback.
+typedef struct SaGroundHit {
+  float point[3];
+  float normal[3];
+  uint32_t flags;
+} SaGroundHit;
+
+// Highest walkable surface on the vertical segment `top` -> `bottom`
+// (3 floats each). Return 1 and fill `out` on a hit, 0 otherwise.
+typedef int32_t (*SaGroundFn)(void *user,
+                              const float *top,
+                              const float *bottom,
+                              struct SaGroundHit *out);
+
+// Wall contact for a sphere: return 1 and write the push-out displacement
+// (3 floats) to `out`, or 0 for no contact.
+typedef int32_t (*SaPushOutFn)(void *user, const float *center, float radius, float *out);
+
+// One frame of controller input.
+typedef struct SaInput {
+  // World-space stick yaw, BAMS (0x10000 = full turn), camera already applied.
+  int32_t stick_angle;
+  // 0 = released .. 1 = full tilt.
+  float stick_magnitude;
+  uint8_t jump_held;
+  uint8_t jump_pressed;
+} SaInput;
+
+// Snapshot of a player after a step.
+typedef struct SaPlayerState {
+  float position[3];
+  // BAMS x, y (yaw), z.
+  int32_t rotation[3];
+  // Local-frame speed (x forward, y up, z side).
+  float speed[3];
+  // World-space velocity.
+  float velocity[3];
+  // `SA_ACTION_*`.
+  uint32_t action;
+  uint32_t animation;
+  uint8_t on_ground;
+  uint16_t invulnerable_frames;
+} SaPlayerState;
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -274,6 +334,37 @@ enum SaStatus sa_chao_file_write(const struct SaChaoFile *f, uint8_t **out_bytes
 void sa_bytes_free(uint8_t *bytes, size_t len);
 
 void sa_chao_file_free(struct SaChaoFile *f);
+
+// Collision world over a landtable's collision triangles (copied).
+enum SaStatus sa_world_from_collision(const struct SaCollision *c, struct SaWorld **out);
+
+// Collision world backed by your engine. `ground` is required; `push_out`
+// may be NULL (no walls). Callbacks run on the thread calling `sa_player_step`.
+enum SaStatus sa_world_from_callbacks(SaGroundFn ground,
+                                      SaPushOutFn push_out,
+                                      void *user,
+                                      struct SaWorld **out);
+
+void sa_world_free(struct SaWorld *w);
+
+// Creates a player with the given physics (e.g. from `sa_physics`) at
+// `position` (3 floats).
+enum SaStatus sa_player_create(const struct SaPhysics *physics,
+                               const float *position,
+                               struct SaPlayer **out);
+
+// Advances the player one frame (1/60 s).
+enum SaStatus sa_player_step(struct SaPlayer *p,
+                             const struct SaInput *input,
+                             const struct SaWorld *world);
+
+enum SaStatus sa_player_state(const struct SaPlayer *p, struct SaPlayerState *out);
+
+// Applies damage (knockback + 120 invulnerable frames). Writes 1 to
+// `applied` if it took effect, 0 while invulnerable. `applied` may be NULL.
+enum SaStatus sa_player_damage(struct SaPlayer *p, uint8_t *applied);
+
+void sa_player_free(struct SaPlayer *p);
 
 #ifdef __cplusplus
 }  // extern "C"

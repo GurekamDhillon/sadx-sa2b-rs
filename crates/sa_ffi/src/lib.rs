@@ -13,6 +13,8 @@
 
 #![allow(clippy::missing_safety_doc)]
 
+pub mod controller;
+
 use std::cell::RefCell;
 use std::ffi::{c_char, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -202,10 +204,10 @@ fn set_error(msg: impl Into<String>) {
     LAST_ERROR.with(|e| *e.borrow_mut() = s);
 }
 
-type Fail = (SaStatus, String);
+pub(crate) type Fail = (SaStatus, String);
 
 /// Runs `f`, converting errors and panics into a status + last error.
-fn guard(f: impl FnOnce() -> Result<(), Fail>) -> SaStatus {
+pub(crate) fn guard(f: impl FnOnce() -> Result<(), Fail>) -> SaStatus {
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(Ok(())) => SaStatus::Ok,
         Ok(Err((s, msg))) => {
@@ -232,7 +234,7 @@ fn data_err(e: sa_data::Error) -> Fail {
     (s, e.to_string())
 }
 
-fn null() -> Fail {
+pub(crate) fn null() -> Fail {
     (SaStatus::NullArgument, "null argument".into())
 }
 
@@ -263,7 +265,7 @@ unsafe fn cstr<'a>(s: *const c_char) -> Result<&'a str, Fail> {
     CStr::from_ptr(s).to_str().map_err(|_| (SaStatus::Range, "string is not valid UTF-8".into()))
 }
 
-unsafe fn put<T>(out: *mut *mut T, v: T) -> Result<(), Fail> {
+pub(crate) unsafe fn put<T>(out: *mut *mut T, v: T) -> Result<(), Fail> {
     if out.is_null() {
         return Err(null());
     }
@@ -271,12 +273,12 @@ unsafe fn put<T>(out: *mut *mut T, v: T) -> Result<(), Fail> {
     Ok(())
 }
 
-unsafe fn write<T>(out: *mut T, v: T) -> Result<(), Fail> {
+pub(crate) unsafe fn write<T>(out: *mut T, v: T) -> Result<(), Fail> {
     *out.as_mut().ok_or_else(null)? = v;
     Ok(())
 }
 
-unsafe fn free<T>(p: *mut T) {
+pub(crate) unsafe fn free<T>(p: *mut T) {
     if !p.is_null() {
         drop(Box::from_raw(p));
     }

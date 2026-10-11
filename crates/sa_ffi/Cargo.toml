@@ -9,6 +9,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
 sa_data = { path = "../sa_data" }
+sa_controller = { path = "../sa_controller" }
 sa_formats = { path = "../sa_formats" }
 
 [build-dependencies]

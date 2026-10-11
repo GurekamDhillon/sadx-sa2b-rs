@@ -65,6 +65,53 @@ static int check_chao(void) {
     return 0;
 }
 
+static int32_t flat_ground(void *user, const float *top, const float *bottom, SaGroundHit *out) {
+    (void)user;
+    if (top[1] >= 0.0f && bottom[1] <= 0.0f) {
+        out->point[0] = top[0]; out->point[1] = 0.0f; out->point[2] = top[2];
+        out->normal[0] = 0.0f; out->normal[1] = 1.0f; out->normal[2] = 0.0f;
+        out->flags = 1;
+        return 1;
+    }
+    return 0;
+}
+
+/* Runs a player for `frames` frames with full stick, then one jump; returns 0 on success. */
+static int run_player(const SaPhysics *p, const float start[3], const SaWorld *w, const char *label) {
+    SaPlayer *pl = NULL;
+    SaPlayerState s;
+    SaInput in;
+    int f, landed_frames = 0;
+    memset(&in, 0, sizeof in);
+    CHECK(sa_player_create(p, start, &pl));
+    for (f = 0; f < 240; f++) {
+        in.stick_angle = f * 0x300;
+        in.stick_magnitude = 1.0f;
+        in.jump_pressed = (f == 60);
+        in.jump_held = (f >= 60 && f < 90);
+        CHECK(sa_player_step(pl, &in, w));
+        CHECK(sa_player_state(pl, &s));
+        landed_frames += s.on_ground;
+    }
+    printf("%s: ended at (%.1f, %.1f, %.1f), grounded %d/240 frames, action %u\n", label, s.position[0], s.position[1], s.position[2], landed_frames, s.action);
+    sa_player_free(pl);
+    return landed_frames > 100 ? 0 : 1;
+}
+
+static int check_controller(void) {
+    SaWorld *w = NULL;
+    SaPhysics p;
+    float start[3] = {0.0f, 0.0f, 0.0f};
+    memset(&p, 0, sizeof p);
+    p.hang_time = 60; p.jump_speed = 1.66f; p.jump_add = 0.076f; p.weight = 0.08f;
+    p.speed_cap_h = 16.0f; p.speed_cap_v = 16.0f; p.speed_max_h = 3.0f; p.run_accel = 0.05f; p.run_decel = -0.06f;
+    p.jog_speed = 0.46f; p.run_speed = 1.39f; p.rush_speed = 2.3f; p.dash_speed = 5.09f; p.height = 10.0f; p.radius = 4.0f;
+    CHECK(sa_world_from_callbacks(flat_ground, NULL, NULL, &w));
+    if (run_player(&p, start, w, "controller (C callback world)")) return 1;
+    sa_world_free(w);
+    return 0;
+}
+
 static int check_game(const char *dir) {
     SaGame *g = NULL;
     SaPhysics p;
@@ -105,6 +152,14 @@ static int check_game(const char *dir) {
     CHECK(sa_collision_load_landtable(g, "objLandTableNeut", &col));
     CHECK(sa_collision_view(col, &cv));
     printf("neutral garden: %u visible triangles, %u collision triangles\n", v.index_count / 3, cv.triangle_count);
+    {
+        /* Drop Sonic above the floor near the garden centre and run him around. */
+        SaWorld *w = NULL;
+        float start[3] = {-127.8f, 60.0f, -118.1f};
+        CHECK(sa_world_from_collision(col, &w));
+        if (run_player(&p, start, w, "sonic in the neutral garden")) return 1;
+        sa_world_free(w);
+    }
     sa_collision_free(col);
     sa_mesh_free(m);
     sa_game_close(g);
@@ -113,7 +168,7 @@ static int check_game(const char *dir) {
 }
 
 int main(int argc, char **argv) {
-    if (check_errors() || check_chao()) return 1;
+    if (check_errors() || check_chao() || check_controller()) return 1;
     if (argc > 1 && check_game(argv[1])) return 1;
     printf("ALL OK\n");
     return 0;

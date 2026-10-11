@@ -104,11 +104,9 @@ impl AddressMap for Pe {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
-    use super::*;
-
-    /// Builds a tiny PE32 with one section `.data` at RVA 0x1000, raw 0x200.
+/// Builds a tiny PE32 (one `.data` section at RVA 0x1000, raw 0x200) around
+/// `payload`. For tests in this and sibling crates; not for real files.
+pub mod tests_support {
     pub fn tiny_pe(payload: &[u8]) -> Vec<u8> {
         let mut d = vec![0u8; 0x200];
         d[0..2].copy_from_slice(b"MZ");
@@ -128,6 +126,12 @@ pub(crate) mod tests {
         d.extend_from_slice(payload);
         d
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tests_support::tiny_pe;
+    use super::*;
 
     #[test]
     fn maps_virtual_addresses() {

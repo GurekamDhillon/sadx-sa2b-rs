@@ -69,10 +69,11 @@ impl Node {
         }
         if self.flags & eval::UNIT_ANG == 0 {
             let [x, y, z] = self.rotation.map(bams_to_radians);
+            // njRotateXYZ post-multiplies X, then Y, then Z; the ZXY flag selects Z, X, Y.
             m = if self.flags & eval::ZXY_ANG != 0 {
-                m.mul(&Mat4::rot_y(y)).mul(&Mat4::rot_x(x)).mul(&Mat4::rot_z(z))
+                m.mul(&Mat4::rot_z(z)).mul(&Mat4::rot_x(x)).mul(&Mat4::rot_y(y))
             } else {
-                m.mul(&Mat4::rot_z(z)).mul(&Mat4::rot_y(y)).mul(&Mat4::rot_x(x))
+                m.mul(&Mat4::rot_x(x)).mul(&Mat4::rot_y(y)).mul(&Mat4::rot_z(z))
             };
         }
         if self.flags & eval::UNIT_SCL == 0 {

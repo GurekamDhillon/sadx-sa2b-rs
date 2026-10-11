@@ -2,6 +2,7 @@
 //! `sa_formats`: install detection, physics tables, enums, the character
 //! asset catalog and the Chao save format.
 
+pub mod anim;
 pub mod catalog;
 pub mod chao_save;
 pub mod enums;

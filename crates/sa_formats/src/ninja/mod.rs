@@ -7,6 +7,7 @@ pub mod gc;
 pub mod math;
 pub mod motion;
 pub mod object;
+pub mod pose;
 
 use crate::bytes::{Bytes, Endian, FileOffsets};
 use crate::error::{invalid, Result};

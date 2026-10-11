@@ -197,6 +197,15 @@ pub enum ChaoStat {
     Unknown = 7,
 }
 
+impl ChaoStat {
+    pub const ALL: [ChaoStat; 8] = [ChaoStat::Swim, ChaoStat::Fly, ChaoStat::Run, ChaoStat::Power, ChaoStat::Stamina, ChaoStat::Luck, ChaoStat::Intelligence, ChaoStat::Unknown];
+
+    /// Stat at array index `i` (wraps out-of-range values into `Unknown`).
+    pub fn from_index(i: usize) -> ChaoStat {
+        Self::ALL.get(i).copied().unwrap_or(ChaoStat::Unknown)
+    }
+}
+
 /// Stat grades as stored in `StatGrades`: E=0 .. S=5 (CWE adds X=6).
 pub const GRADE_NAMES: [&str; 7] = ["E", "D", "C", "B", "A", "S", "X"];
 

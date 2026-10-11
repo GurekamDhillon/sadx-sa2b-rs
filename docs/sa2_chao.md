@@ -395,3 +395,11 @@ Status after the verification pass:
 **Not reachable:**
 - chao-island.com/wiki returned 403.
 - chao.fandom.com returned 402.
+
+## Correction (2026-10-11, from SA2Structs.h)
+
+`ChaoEmotions` at +0x124 is 0x3C bytes, so the fields after it are:
+ClassRoomFlags (lesson flags) **+0x160**, SA2BToys **+0x164**,
+SA2BCharacterBonds[6] (6 bytes each) **+0x16C**, field_190, DNA **+0x438**.
+The +0x158 / +0x15C / +0x166 values above are wrong. See
+`crates/sa_data/src/chao_save.rs` (`off` module) for the full offset table.

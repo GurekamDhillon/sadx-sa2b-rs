@@ -1,6 +1,7 @@
 /* Exercises sa.h from C. Usage: sa_ffi_test [SA2 install dir]
  * Without a directory it checks error handling and the Chao save API only.
  * Exits non-zero on the first failure. */
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -98,6 +99,51 @@ static int run_player(const SaPhysics *p, const float start[3], const SaWorld *w
     return landed_frames > 100 ? 0 : 1;
 }
 
+/* One enemy 40 units ahead (+X) and 10 up. */
+static uint32_t one_target(void *user, const float *from, float *out, uint32_t max) {
+    (void)user; (void)from;
+    if (max < 1) return 0;
+    out[0] = 40.0f; out[1] = 10.0f; out[2] = 0.0f;
+    return 1;
+}
+
+static int check_homing(const SaPhysics *p) {
+    SaWorld *w = NULL;
+    SaPlayer *pl = NULL;
+    SaPlayerState s;
+    SaInput in;
+    float start[3] = {0.0f, 0.0f, 0.0f};
+    float best = 1e9f;
+    int f;
+    CHECK(sa_world_from_callbacks(flat_ground, NULL, one_target, NULL, &w));
+    CHECK(sa_player_create(p, start, &pl));
+    memset(&in, 0, sizeof in);
+    in.jump_pressed = 1; in.jump_held = 1;
+    CHECK(sa_player_step(pl, &in, w));            /* jump */
+    in.jump_pressed = 0;
+    for (f = 0; f < 10; f++) CHECK(sa_player_step(pl, &in, w));
+    in.jump_pressed = 1;
+    CHECK(sa_player_step(pl, &in, w));            /* homing attack */
+    CHECK(sa_player_state(pl, &s));
+    if (s.action != SA_ACTION_HOMING) {
+        fprintf(stderr, "FAIL: expected homing, action %u\n", s.action);
+        return 1;
+    }
+    memset(&in, 0, sizeof in);
+    for (f = 0; f < 30; f++) {
+        float dx, dy, dz, d;
+        CHECK(sa_player_step(pl, &in, w));
+        CHECK(sa_player_state(pl, &s));
+        dx = s.position[0] - 40.0f; dy = s.position[1] - 10.0f; dz = s.position[2];
+        d = dx * dx + dy * dy + dz * dz;
+        if (d < best) best = d;
+    }
+    printf("homing (C target callback): closest approach %.2f units\n", sqrtf(best));
+    sa_player_free(pl);
+    sa_world_free(w);
+    return best < 25.0f ? 0 : 1;
+}
+
 static int check_controller(void) {
     SaWorld *w = NULL;
     SaPhysics p;
@@ -106,10 +152,10 @@ static int check_controller(void) {
     p.hang_time = 60; p.jump_speed = 1.66f; p.jump_add = 0.076f; p.weight = 0.08f;
     p.speed_cap_h = 16.0f; p.speed_cap_v = 16.0f; p.speed_max_h = 3.0f; p.run_accel = 0.05f; p.run_decel = -0.06f;
     p.jog_speed = 0.46f; p.run_speed = 1.39f; p.rush_speed = 2.3f; p.dash_speed = 5.09f; p.height = 10.0f; p.radius = 4.0f;
-    CHECK(sa_world_from_callbacks(flat_ground, NULL, NULL, &w));
+    CHECK(sa_world_from_callbacks(flat_ground, NULL, NULL, NULL, &w));
     if (run_player(&p, start, w, "controller (C callback world)")) return 1;
     sa_world_free(w);
-    return 0;
+    return check_homing(&p);
 }
 
 static int check_game(const char *dir) {

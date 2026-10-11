@@ -26,6 +26,12 @@ pub trait World {
     fn push_out(&self, _center: Vec3, _radius: f32) -> Option<Vec3> {
         None
     }
+
+    /// Homing-attack candidates near `from`: target points (enemy collision
+    /// centres). The controller picks among them; return none to air-dash.
+    fn homing_targets(&self, _from: Vec3) -> Vec<Vec3> {
+        Vec::new()
+    }
 }
 
 /// Surfaces whose normal Y is below this count as walls for `push_out`.

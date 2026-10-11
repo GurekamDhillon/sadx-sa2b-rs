@@ -98,6 +98,93 @@ fn main() {
                 }
             }
         }
+        "seq" => {
+            // seq <lo> <hi> <dispA> <dispB>: FPU load from [reg+dispA] followed within 4
+            // instructions by an FPU store to [reg+dispB], inside [lo, hi).
+            let (lo, hi, da, db) = (hex(&a[3]), hex(&a[4]), hex(&a[5]), hex(&a[6]));
+            let start = (lo - base) as usize;
+            let end = ((hi - base) as usize).min(code.len());
+            let mut d = Decoder::with_ip(32, &code[start..end], lo, DecoderOptions::NONE);
+            let mut win: Vec<Instruction> = Vec::new();
+            let is_mem = |i: &Instruction, disp: u64| i.memory_base() != iced_x86::Register::None && i.memory_base() != iced_x86::Register::EBP && i.memory_base() != iced_x86::Register::ESP && i.memory_displacement64() == disp;
+            while d.can_decode() {
+                let ins = d.decode();
+                if matches!(ins.mnemonic(), Mnemonic::Fstp | Mnemonic::Fst | Mnemonic::Mov) && ins.op0_kind() == OpKind::Memory && is_mem(&ins, db) {
+                    if let Some(src) = win.iter().find(|w| matches!(w.mnemonic(), Mnemonic::Fld | Mnemonic::Mov) && w.op_count() == 2 && w.op1_kind() == OpKind::Memory && is_mem(w, da)) {
+                        println!("{:#x} -> {:#x}", src.ip(), ins.ip());
+                    }
+                }
+                win.push(ins);
+                if win.len() > 10 { win.remove(0); }
+            }
+        }
+        "imm" => {
+            // imm <lo> <hi> <mnemonic> <value>: instructions with that mnemonic and immediate.
+            let (lo, hi) = (hex(&a[3]), hex(&a[4]));
+            let want = a[5].to_lowercase();
+            let val = hex(&a[6]);
+            let start = (lo - base) as usize;
+            let end = ((hi - base) as usize).min(code.len());
+            let mut d = Decoder::with_ip(32, &code[start..end], lo, DecoderOptions::NONE);
+            let mut f = IntelFormatter::new();
+            while d.can_decode() {
+                let ins = d.decode();
+                if format!("{:?}", ins.mnemonic()).to_lowercase() == want && (0..ins.op_count()).any(|i| matches!(ins.op_kind(i), OpKind::Immediate8 | OpKind::Immediate16 | OpKind::Immediate32 | OpKind::Immediate8to32 | OpKind::Immediate8to16) && ins.immediate(i) == val) {
+                    let mut s = String::new();
+                    f.format(&ins, &mut s);
+                    println!("{:#x}: {s}", ins.ip());
+                }
+            }
+        }
+        "inc0" => {
+            // inc0 <lo> <hi>: fld [r]; fadd/fsub <const>; fstp [r] (in-place update of offset 0).
+            let (lo, hi) = (hex(&a[3]), hex(&a[4]));
+            let start = (lo - base) as usize;
+            let end = ((hi - base) as usize).min(code.len());
+            let mut d = Decoder::with_ip(32, &code[start..end], lo, DecoderOptions::NONE);
+            let r0 = |i: &Instruction| i.memory_base() != iced_x86::Register::None && i.memory_base() != iced_x86::Register::EBP && i.memory_base() != iced_x86::Register::ESP && i.memory_displacement64() == 0 && i.memory_index() == iced_x86::Register::None;
+            let mut w: Vec<Instruction> = Vec::new();
+            while d.can_decode() {
+                let ins = d.decode();
+                w.push(ins);
+                if w.len() > 6 { w.remove(0); }
+                if ins.mnemonic() == Mnemonic::Fstp && r0(&ins) {
+                    let n = w.len();
+                    for k in 0..n.saturating_sub(1) {
+                        if w[k].mnemonic() == Mnemonic::Fld && r0(&w[k]) {
+                            if let Some(op) = w[k + 1..n - 1].iter().find(|x| matches!(x.mnemonic(), Mnemonic::Fadd | Mnemonic::Fsub | Mnemonic::Fmul) && x.memory_base() == iced_x86::Register::None && x.memory_displacement64() > 0x900000) {
+                                let c = op.memory_displacement64() as u32;
+                                let o = pe.offset(c).unwrap();
+                                let v = if op.memory_size() == iced_x86::MemorySize::Float64 { f64::from_le_bytes(data[o..o + 8].try_into().unwrap()) } else { f32::from_le_bytes(data[o..o + 4].try_into().unwrap()) as f64 };
+                                println!("{:#x}: {:?} {c:#x} = {v}", w[k].ip(), op.mnemonic());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        "cst" => {
+            // cst <lo> <hi> <disp>: fld <absolute const> followed by fstp [reg+disp].
+            let (lo, hi, db) = (hex(&a[3]), hex(&a[4]), hex(&a[5]));
+            let start = (lo - base) as usize;
+            let end = ((hi - base) as usize).min(code.len());
+            let mut d = Decoder::with_ip(32, &code[start..end], lo, DecoderOptions::NONE);
+            let mut prev: Option<Instruction> = None;
+            while d.can_decode() {
+                let ins = d.decode();
+                if matches!(ins.mnemonic(), Mnemonic::Fstp) && ins.memory_base() != iced_x86::Register::None && ins.memory_base() != iced_x86::Register::EBP && ins.memory_displacement64() == db {
+                    if let Some(p) = prev {
+                        if p.mnemonic() == Mnemonic::Fld && p.memory_base() == iced_x86::Register::None && p.memory_displacement64() > 0x900000 {
+                            let c = p.memory_displacement64() as u32;
+                            let o = pe.offset(c).unwrap();
+                            let v = if p.memory_size() == iced_x86::MemorySize::Float64 { f64::from_le_bytes(data[o..o + 8].try_into().unwrap()) } else { f32::from_le_bytes(data[o..o + 4].try_into().unwrap()) as f64 };
+                            println!("{:#x}: [{c:#x}] = {v}", p.ip());
+                        }
+                    }
+                }
+                prev = Some(ins);
+            }
+        }
         "k" => {
             for s in &a[3..] {
                 let addr = hex(s) as u32;

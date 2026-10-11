@@ -40,6 +40,12 @@ in [michael-fadely/sa-movement-rnd](https://github.com/michael-fadely/sa-movemen
 | ~0x509810 | Sonic jump start (`spd.y = jump_speed`, anim 15) | `Player::jump` |
 | 0x505ABC | jump-hold lift (`spd.y += jump_add * 0.8`) | `Player::step` |
 | 0x513840 | damage reaction (`spd = (-run_speed, jump_speed)`, 120 frames invulnerable, anim 13) | `Player::damage` |
+| 0x54C720 | spin dash charge / release: +0.4 per frame while held up to 10, release sets forward speed, ends after 300 frames | `Player::spindash_charge` |
+| 0x5422EE | roll state: below 1.85 forward speed a held button starts a charge at 5.0 | `Player::step` (Roll) |
+| 0x541E6F | charge state: leaving the ground turns into a jump with speed reset to 5.0 | `Player::step` (SpindashCharge) |
+| 0x4DBA30 | jump pressed this frame (homing trigger while in a jump) | `Player::step` (Jump) |
+| 0x548B90 | homing start: air dash at 5.0 (10 Super) when there is no target | `Player::start_homing` |
+| 0x548C90 | homing per frame: closest target within 100 units and ±112.5° of facing, yaw steps 0x800 (0x1000 Super), velocity = direction × 5 (10 Super) | `Player::homing_step` |
 
 ## Behaviour this produces (tested)
 
@@ -64,8 +70,17 @@ in [michael-fadely/sa-movement-rnd](https://github.com/michael-fadely/sa-movemen
 - **Special surfaces.** Tubes (`0x20000`), stairs (`0x4000`), path following,
   `PRotatedByGravityS` (`0x800000`) and the `pwp+0x1E4` brake flags are not
   implemented.
-- **Character moves.** Spin dash, homing attack, light dash, rolling,
-  bouncing, gliding/climbing, mech hover and the SA2 upgrade checks are not
-  implemented yet. `Body::rolling` exists for the slope code only.
+- **Moves not yet implemented.** Light dash, bounce, gliding/climbing, mech
+  hover and the SA2 upgrade checks.
+- **Spin dash: partly inferred.** Starting a charge from standing or running
+  when slower than 1.85 is inferred from the roll state (the start site from
+  idle was not located). Rolling steers with the stick but does not drive,
+  and ends below 1.85 unless the button is held; both are inferred. The
+  charge state brakes with the normal no-stick ground physics.
+- **Homing: partly inferred.** Targets come from the host
+  (`World::homing_targets`); the game builds the list in its collision
+  system with squared distances. After 180 frames the game scales speed by a
+  random 0.7..0.8; this uses 0.75. What happens on hitting a target is not
+  decoded: `Player::bounce_off_target` re-launches like a jump.
 - **SA2-specific tuning.** Any change SA2 made to these functions is unknown
   (its code is encrypted). The `jump_add × 0.8` lift factor is SADX Sonic's.

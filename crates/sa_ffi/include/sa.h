@@ -61,6 +61,15 @@
 
 #define SA_ACTION_HURT 4
 
+#define SA_ACTION_SPINDASH_CHARGE 5
+
+#define SA_ACTION_ROLL 6
+
+#define SA_ACTION_HOMING 7
+
+// Maximum homing candidates read from an `SaHomingTargetsFn` per frame.
+#define SA_MAX_HOMING_TARGETS 64
+
 typedef enum SaStatus {
   SA_STATUS_OK = 0,
   SA_STATUS_NULL_ARGUMENT = 1,
@@ -219,6 +228,10 @@ typedef int32_t (*SaGroundFn)(void *user,
 // (3 floats) to `out`, or 0 for no contact.
 typedef int32_t (*SaPushOutFn)(void *user, const float *center, float radius, float *out);
 
+// Homing-attack candidates near `from` (3 floats): write up to `max` target
+// points (3 floats each) to `out` and return how many. May be NULL.
+typedef uint32_t (*SaHomingTargetsFn)(void *user, const float *from, float *out, uint32_t max);
+
 // One frame of controller input.
 typedef struct SaInput {
   // World-space stick yaw, BAMS (0x10000 = full turn), camera already applied.
@@ -227,6 +240,9 @@ typedef struct SaInput {
   float stick_magnitude;
   uint8_t jump_held;
   uint8_t jump_pressed;
+  // Spin dash / action button.
+  uint8_t action_held;
+  uint8_t action_pressed;
 } SaInput;
 
 // Snapshot of a player after a step.
@@ -243,6 +259,8 @@ typedef struct SaPlayerState {
   uint32_t animation;
   uint8_t on_ground;
   uint16_t invulnerable_frames;
+  // Stored spin dash speed while charging.
+  float spindash_speed;
 } SaPlayerState;
 
 #ifdef __cplusplus
@@ -339,9 +357,10 @@ void sa_chao_file_free(struct SaChaoFile *f);
 enum SaStatus sa_world_from_collision(const struct SaCollision *c, struct SaWorld **out);
 
 // Collision world backed by your engine. `ground` is required; `push_out`
-// may be NULL (no walls). Callbacks run on the thread calling `sa_player_step`.
+// (walls) and `targets` (homing attack) may be NULL. Callbacks run on the thread calling `sa_player_step`.
 enum SaStatus sa_world_from_callbacks(SaGroundFn ground,
                                       SaPushOutFn push_out,
+                                      SaHomingTargetsFn targets,
                                       void *user,
                                       struct SaWorld **out);
 
@@ -363,6 +382,12 @@ enum SaStatus sa_player_state(const struct SaPlayer *p, struct SaPlayerState *ou
 // Applies damage (knockback + 120 invulnerable frames). Writes 1 to
 // `applied` if it took effect, 0 while invulnerable. `applied` may be NULL.
 enum SaStatus sa_player_damage(struct SaPlayer *p, uint8_t *applied);
+
+// Turns Super form on (1) or off (0): faster homing with no facing limit.
+enum SaStatus sa_player_set_super(struct SaPlayer *p, uint8_t enabled);
+
+// Call when a homing attack or jump hits an enemy: bounces back up.
+enum SaStatus sa_player_bounce(struct SaPlayer *p);
 
 void sa_player_free(struct SaPlayer *p);
 

@@ -12,6 +12,12 @@ pub const SA_ACTION_RUN: u32 = 1;
 pub const SA_ACTION_JUMP: u32 = 2;
 pub const SA_ACTION_FALL: u32 = 3;
 pub const SA_ACTION_HURT: u32 = 4;
+pub const SA_ACTION_SPINDASH_CHARGE: u32 = 5;
+pub const SA_ACTION_ROLL: u32 = 6;
+pub const SA_ACTION_HOMING: u32 = 7;
+
+/// Maximum homing candidates read from an `SaHomingTargetsFn` per frame.
+pub const SA_MAX_HOMING_TARGETS: usize = 64;
 
 /// Ground query result written by an `SaGroundFn` callback.
 #[repr(C)]
@@ -28,10 +34,13 @@ pub type SaGroundFn = Option<unsafe extern "C" fn(user: *mut c_void, top: *const
 /// Wall contact for a sphere: return 1 and write the push-out displacement
 /// (3 floats) to `out`, or 0 for no contact.
 pub type SaPushOutFn = Option<unsafe extern "C" fn(user: *mut c_void, center: *const f32, radius: f32, out: *mut f32) -> i32>;
+/// Homing-attack candidates near `from` (3 floats): write up to `max` target
+/// points (3 floats each) to `out` and return how many. May be NULL.
+pub type SaHomingTargetsFn = Option<unsafe extern "C" fn(user: *mut c_void, from: *const f32, out: *mut f32, max: u32) -> u32>;
 
 enum WorldKind {
     Mesh(MeshWorld),
-    Callbacks { ground: SaGroundFn, push_out: SaPushOutFn, user: *mut c_void },
+    Callbacks { ground: SaGroundFn, push_out: SaPushOutFn, targets: SaHomingTargetsFn, user: *mut c_void },
 }
 
 /// Opaque collision world.
@@ -65,6 +74,15 @@ impl World for SaWorld {
             }
         }
     }
+
+    fn homing_targets(&self, from: Vec3) -> Vec<Vec3> {
+        let WorldKind::Callbacks { targets: Some(f), user, .. } = &self.0 else { return Vec::new() };
+        let p: [f32; 3] = from.into();
+        let mut buf = [0f32; SA_MAX_HOMING_TARGETS * 3];
+        // SAFETY: as above; the callback writes at most `max` points.
+        let n = unsafe { f(*user, p.as_ptr(), buf.as_mut_ptr(), SA_MAX_HOMING_TARGETS as u32) } as usize;
+        buf.chunks_exact(3).take(n.min(SA_MAX_HOMING_TARGETS)).map(|c| Vec3::new(c[0], c[1], c[2])).collect()
+    }
 }
 
 /// One frame of controller input.
@@ -77,6 +95,9 @@ pub struct SaInput {
     pub stick_magnitude: f32,
     pub jump_held: u8,
     pub jump_pressed: u8,
+    /// Spin dash / action button.
+    pub action_held: u8,
+    pub action_pressed: u8,
 }
 
 /// Snapshot of a player after a step.
@@ -95,6 +116,8 @@ pub struct SaPlayerState {
     pub animation: u32,
     pub on_ground: u8,
     pub invulnerable_frames: u16,
+    /// Stored spin dash speed while charging.
+    pub spindash_speed: f32,
 }
 
 /// Opaque controlled character.
@@ -107,14 +130,14 @@ pub unsafe extern "C" fn sa_world_from_collision(c: *const SaCollision, out: *mu
 }
 
 /// Collision world backed by your engine. `ground` is required; `push_out`
-/// may be NULL (no walls). Callbacks run on the thread calling `sa_player_step`.
+/// (walls) and `targets` (homing attack) may be NULL. Callbacks run on the thread calling `sa_player_step`.
 #[no_mangle]
-pub unsafe extern "C" fn sa_world_from_callbacks(ground: SaGroundFn, push_out: SaPushOutFn, user: *mut c_void, out: *mut *mut SaWorld) -> SaStatus {
+pub unsafe extern "C" fn sa_world_from_callbacks(ground: SaGroundFn, push_out: SaPushOutFn, targets: SaHomingTargetsFn, user: *mut c_void, out: *mut *mut SaWorld) -> SaStatus {
     crate::guard(|| {
         if ground.is_none() {
             return Err(null());
         }
-        put(out, SaWorld(WorldKind::Callbacks { ground, push_out, user }))
+        put(out, SaWorld(WorldKind::Callbacks { ground, push_out, targets, user }))
     })
 }
 
@@ -146,7 +169,14 @@ pub unsafe extern "C" fn sa_player_step(p: *mut SaPlayer, input: *const SaInput,
         let p = &mut p.as_mut().ok_or_else(null)?.0;
         let i = input.as_ref().ok_or_else(null)?;
         let w = world.as_ref().ok_or_else(null)?;
-        let input = Input { stick_angle: i.stick_angle, stick_magnitude: i.stick_magnitude, jump_held: i.jump_held != 0, jump_pressed: i.jump_pressed != 0 };
+        let input = Input {
+            stick_angle: i.stick_angle,
+            stick_magnitude: i.stick_magnitude,
+            jump_held: i.jump_held != 0,
+            jump_pressed: i.jump_pressed != 0,
+            action_held: i.action_held != 0,
+            action_pressed: i.action_pressed != 0,
+        };
         p.step(&input, w);
         Ok(())
     })
@@ -162,6 +192,9 @@ pub unsafe extern "C" fn sa_player_state(p: *const SaPlayer, out: *mut SaPlayerS
             Action::Jump => SA_ACTION_JUMP,
             Action::Fall => SA_ACTION_FALL,
             Action::Hurt => SA_ACTION_HURT,
+            Action::SpindashCharge => SA_ACTION_SPINDASH_CHARGE,
+            Action::Roll => SA_ACTION_ROLL,
+            Action::Homing => SA_ACTION_HOMING,
         };
         write(
             out,
@@ -174,6 +207,7 @@ pub unsafe extern "C" fn sa_player_state(p: *const SaPlayer, out: *mut SaPlayerS
                 animation: p.animation as u32,
                 on_ground: p.body.on_ground as u8,
                 invulnerable_frames: p.invulnerable,
+                spindash_speed: p.spindash_speed,
             },
         )
     })
@@ -188,6 +222,24 @@ pub unsafe extern "C" fn sa_player_damage(p: *mut SaPlayer, applied: *mut u8) ->
         if let Some(a) = applied.as_mut() {
             *a = took as u8;
         }
+        Ok(())
+    })
+}
+
+/// Turns Super form on (1) or off (0): faster homing with no facing limit.
+#[no_mangle]
+pub unsafe extern "C" fn sa_player_set_super(p: *mut SaPlayer, enabled: u8) -> SaStatus {
+    crate::guard(|| {
+        p.as_mut().ok_or_else(null)?.0.super_form = enabled != 0;
+        Ok(())
+    })
+}
+
+/// Call when a homing attack or jump hits an enemy: bounces back up.
+#[no_mangle]
+pub unsafe extern "C" fn sa_player_bounce(p: *mut SaPlayer) -> SaStatus {
+    crate::guard(|| {
+        p.as_mut().ok_or_else(null)?.0.bounce_off_target();
         Ok(())
     })
 }
@@ -215,8 +267,8 @@ mod tests {
     fn callback_world_drives_player() {
         unsafe {
             let mut w = ptr::null_mut();
-            assert_eq!(sa_world_from_callbacks(None, None, ptr::null_mut(), &mut w), SaStatus::NullArgument);
-            assert_eq!(sa_world_from_callbacks(Some(flat), None, ptr::null_mut(), &mut w), SaStatus::Ok);
+            assert_eq!(sa_world_from_callbacks(None, None, None, ptr::null_mut(), &mut w), SaStatus::NullArgument);
+            assert_eq!(sa_world_from_callbacks(Some(flat), None, None, ptr::null_mut(), &mut w), SaStatus::Ok);
             let physics = SaPhysics {
                 hang_time: 60,
                 jump_speed: 1.66,
@@ -237,7 +289,7 @@ mod tests {
             };
             let mut p = ptr::null_mut();
             assert_eq!(sa_player_create(&physics, [0.0f32, 0.0, 0.0].as_ptr(), &mut p), SaStatus::Ok);
-            let run = SaInput { stick_angle: 0, stick_magnitude: 1.0, jump_held: 0, jump_pressed: 0 };
+            let run = SaInput { stick_angle: 0, stick_magnitude: 1.0, ..Default::default() };
             for _ in 0..60 {
                 assert_eq!(sa_player_step(p, &run, w), SaStatus::Ok);
             }

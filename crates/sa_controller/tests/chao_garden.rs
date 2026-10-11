@@ -38,7 +38,7 @@ fn sonic_lands_runs_and_jumps_in_the_neutral_garden() {
     let mut min_y = f32::MAX;
     let mut grounded_frames = 0;
     for f in 0..240 {
-        let input = Input { stick_angle: f * 0x300, stick_magnitude: 1.0, jump_pressed: f == 60, jump_held: (60..90).contains(&f) };
+        let input = Input { stick_angle: f * 0x300, stick_magnitude: 1.0, jump_pressed: f == 60, jump_held: (60..90).contains(&f), ..Default::default() };
         sonic.step(&input, &world);
         min_y = min_y.min(sonic.position.y);
         if std::env::var("TRACE").is_ok() && f % 5 == 0 {
@@ -55,4 +55,29 @@ fn sonic_lands_runs_and_jumps_in_the_neutral_garden() {
     println!("level bounds {lo:?} .. {hi:?}");
     assert!(min_y > lo[1] - 1.0, "fell out of the level");
     assert!(grounded_frames > 120);
+
+    // Spin dash on the real floor: charge for 30 frames, release, roll.
+    while !sonic.body.on_ground {
+        sonic.step(&Input::default(), &world);
+    }
+    for _ in 0..120 {
+        sonic.step(&Input::default(), &world);
+    }
+    // Face back toward open floor (the circle ends next to a wall).
+    let to_start = start - sonic.position;
+    sonic.body.rotation[1] = sa_controller::angle::atan2_bams(to_start.z, to_start.x);
+    sonic.step(&Input { action_pressed: true, action_held: true, ..Default::default() }, &world);
+    assert_eq!(sonic.action, sa_controller::Action::SpindashCharge);
+    for _ in 0..30 {
+        sonic.step(&Input { action_held: true, ..Default::default() }, &world);
+    }
+    let before = sonic.position;
+    sonic.step(&Input::default(), &world);
+    assert_eq!(sonic.action, sa_controller::Action::Roll);
+    for _ in 0..30 {
+        sonic.step(&Input::default(), &world);
+    }
+    let rolled = (sonic.position - before).length();
+    println!("spin dash rolled {rolled:.1} units in 30 frames, now {:?} at {:?}", sonic.action, sonic.position);
+    assert!(rolled > 60.0 && sonic.position.y > lo[1] - 1.0);
 }

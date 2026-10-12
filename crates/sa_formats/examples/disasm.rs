@@ -204,6 +204,19 @@ fn main() {
                 if w.len() > win { w.remove(0); }
             }
         }
+        "jt" => {
+            // jt <lo> <hi>: jmp [index*4 + table] dispatches in a range.
+            let (lo, hi) = (hex(&a[3]), hex(&a[4]));
+            let start = (lo - base) as usize;
+            let end = ((hi - base) as usize).min(code.len());
+            let mut d = Decoder::with_ip(32, &code[start..end], lo, DecoderOptions::NONE);
+            while d.can_decode() {
+                let ins = d.decode();
+                if ins.mnemonic() == Mnemonic::Jmp && ins.op0_kind() == OpKind::Memory && ins.memory_index_scale() == 4 && ins.memory_displacement64() > 0x400000 {
+                    println!("{:#x}: jmp table at {:#x}", ins.ip(), ins.memory_displacement64());
+                }
+            }
+        }
         "k" => {
             for s in &a[3..] {
                 let addr = hex(s) as u32;

@@ -177,7 +177,8 @@ fn step_player(keys: Res<ButtonInput<KeyCode>>, cam: Res<CamYaw>, shot: Res<Auto
     let fwd = down(KeyCode::KeyW, KeyCode::ArrowUp) as i32 as f32 - down(KeyCode::KeyS, KeyCode::ArrowDown) as i32 as f32;
     let right = down(KeyCode::KeyD, KeyCode::ArrowRight) as i32 as f32 - down(KeyCode::KeyA, KeyCode::ArrowLeft) as i32 as f32;
     let still = std::env::var("DEMO_VIEW").map(|v| v == "face").unwrap_or(false);
-    let (fwd, right) = if scripted && !still && shot.tick < 200 { (1.0, 0.0) } else { (fwd, right) };
+    let spin = std::env::var("DEMO_SCRIPT").map(|v| v == "spin").unwrap_or(false);
+    let (fwd, right) = if scripted && !still && !spin && shot.tick < 200 { (1.0, 0.0) } else { (fwd, right) };
     let mag = (fwd * fwd + right * right).sqrt().min(1.0);
     // Forward at yaw y is (cos y, 0, sin y); screen-right is +0x4000.
     let cam_bams = (cam.0 * 65536.0 / std::f32::consts::TAU) as i32;
@@ -186,8 +187,8 @@ fn step_player(keys: Res<ButtonInput<KeyCode>>, cam: Res<CamYaw>, shot: Res<Auto
         stick_magnitude: mag,
         jump_pressed: std::mem::take(&mut sim.jump_pressed) || (scripted && shot.tick == 150),
         jump_held: keys.pressed(KeyCode::Space) || (scripted && (150..170).contains(&shot.tick)),
-        action_pressed: std::mem::take(&mut sim.action_pressed),
-        action_held: keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight),
+        action_pressed: std::mem::take(&mut sim.action_pressed) || (scripted && spin && (30..33).contains(&shot.tick)),
+        action_held: keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) || (scripted && spin && (30..90).contains(&shot.tick)),
     };
     let Sim { player, world, .. } = &mut *sim;
     player.step(&input, world);
@@ -375,10 +376,14 @@ fn autoshot(mut shot: ResMut<AutoShot>, mut commands: Commands, mut exit: EventW
     }
     shot.tick += 1;
     // Frames at which to grab: standing, mid-run, jumping, then quit.
-    let name = match shot.tick {
-        20 => Some("stand"),
-        110 => Some("run"),
-        158 => Some("jump"),
+    let spin = std::env::var("DEMO_SCRIPT").map(|v| v == "spin").unwrap_or(false);
+    let name = match (spin, shot.tick) {
+        (false, 20) => Some("stand"),
+        (false, 110) => Some("run"),
+        (false, 158) => Some("jump"),
+        (true, 60) => Some("charge"),
+        (true, 110) => Some("roll"),
+        (true, 140) => Some("roll2"),
         _ => None,
     };
     if let Some(n) = name {

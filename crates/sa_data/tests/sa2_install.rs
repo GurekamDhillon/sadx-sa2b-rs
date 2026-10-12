@@ -92,7 +92,7 @@ fn longest_edge(m: &sa_formats::ninja::Mesh) -> f32 {
 fn sonic_skin_stays_attached_in_every_pose() {
     let g = game();
     let rig = g.character_rig(Character::Sonic, Costume::Default).unwrap();
-    for (state, frames) in [(sa_data::anim::state::STAND, [0.0, 4.0]), (sa_data::anim::state::RUN, [0.0, 7.0]), (sa_data::anim::state::JOG, [3.0, 15.0]), (sa_data::anim::state::JUMP, [0.0, 2.0])] {
+    for (state, frames) in [(sa_data::anim::state::STAND, [0.0, 4.0]), (sa_data::anim::state::RUN, [0.0, 7.0]), (sa_data::anim::state::JOG, [3.0, 15.0]), (sa_data::anim::state::JUMP, [0.0, 2.0]), (sa_data::anim::state::SPINDASH, [0.0, 2.6])] {
         for f in frames {
             let mesh = rig.mesh(state, f).unwrap_or_else(|| panic!("no mesh for state {state}"));
             assert!(mesh.triangle_count() > 500, "state {state}: {} triangles", mesh.triangle_count());

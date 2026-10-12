@@ -203,6 +203,13 @@ impl Player {
             self.animation = anim::STOP_SPIN;
             return true;
         }
+        if input.jump_pressed {
+            // SADX cancel: jump out of the charge, no dash.
+            self.spindash_speed = 0.0;
+            self.spin_timer = 0;
+            self.jump();
+            return true;
+        }
         if !input.action_held {
             self.action = Action::Roll;
             self.animation = anim::SPINDASH_RELEASE;
@@ -571,6 +578,26 @@ mod tests {
         p.step(&Input { action_held: true, ..Default::default() }, &world);
         assert_eq!(p.action, Action::Jump);
         assert_eq!(p.spindash_speed, 5.0);
+    }
+
+    #[test]
+    fn jump_cancels_a_charge_and_a_roll() {
+        let world = FlatWorld { height: 0.0 };
+        // SADX: jump during the charge leaves with no dash.
+        let mut p = Player::new(sonic(), Vec3::ZERO);
+        p.step(&press(true, false), &world);
+        assert_eq!(p.action, Action::SpindashCharge);
+        p.step(&Input { action_held: true, jump_pressed: true, ..Default::default() }, &world);
+        assert_eq!(p.action, Action::Jump);
+        assert_eq!(p.body.speed.x, 0.0);
+        // SA2: jump out of the roll keeps the speed.
+        let mut p = Player::new(sonic(), Vec3::ZERO);
+        p.step(&press(true, false), &world);
+        p.step(&Input::default(), &world);
+        assert_eq!(p.action, Action::Roll);
+        p.step(&Input { jump_pressed: true, ..Default::default() }, &world);
+        assert_eq!(p.action, Action::Jump);
+        assert!(p.body.speed.x > 4.0);
     }
 
     struct Targets(Vec<Vec3>);

@@ -88,6 +88,7 @@ fn main() {
     let world = DemoWorld { targets: TARGETS.iter().map(|t| SVec3::from(*t)).collect() };
 
     App::new()
+        .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window { title: "sa-rewrite: Sonic controller demo".into(), ..default() }),
             ..default()
@@ -157,8 +158,8 @@ fn setup(mut commands: Commands, mut anim: ResMut<Anim>, mut meshes: ResMut<Asse
         commands.spawn((Target(i), Mesh3d(ball.clone()), MeshMaterial3d(red.clone()), Transform::from_xyz(t[0], t[1], t[2])));
     }
 
-    commands.spawn((DirectionalLight { illuminance: 8000.0, shadows_enabled: true, ..default() }, Transform::from_xyz(50.0, 100.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y)));
-    commands.spawn((Camera3d::default(), Transform::from_xyz(-40.0, 20.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y)));
+    commands.spawn((DirectionalLight { illuminance: 8000.0, shadows_enabled: true, ..default() }, bevy::pbr::CascadeShadowConfigBuilder { num_cascades: 1, maximum_distance: 150.0, ..default() }.build(), Transform::from_xyz(50.0, 100.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y)));
+    commands.spawn((Camera3d::default(), Msaa::Off, Transform::from_xyz(-40.0, 20.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y)));
     commands.spawn((Hud, Text::new(""), Node { position_type: PositionType::Absolute, top: Val::Px(8.0), left: Val::Px(8.0), ..default() }));
 }
 
@@ -289,7 +290,9 @@ fn sync_visuals(
     mut camera: Query<&mut Transform, (With<Camera3d>, Without<SonicRoot>)>,
     mut hud: Query<&mut Text, With<Hud>>,
     shot: Res<AutoShot>,
+    diag: Res<bevy::diagnostic::DiagnosticsStore>,
 ) {
+    let t0 = std::time::Instant::now();
     let p = &sim.player;
     let pos = Vec3::new(p.position.x, p.position.y, p.position.z);
     // Draw rotation as SA2 does it (a half turn added to the heading).
@@ -335,6 +338,8 @@ fn sync_visuals(
         }
     }
 
+    let pose_ms = t0.elapsed().as_secs_f32() * 1000.0;
+
     // Chase camera: swing behind the direction of travel when moving.
     let vel = Vec3::new(p.body.velocity.x, 0.0, p.body.velocity.z);
     if vel.length() > 0.3 {
@@ -364,8 +369,9 @@ fn sync_visuals(
     if let Ok(mut text) = hud.single_mut() {
         let speed = (p.body.velocity.x.powi(2) + p.body.velocity.z.powi(2)).sqrt();
         text.0 = format!(
-            "{:?}   speed {:5.2}   anim state {} frame {:4.1}   spin dash {:4.1}\nWASD move  Space jump / homing  Shift spin dash  R reset",
-            p.action, speed, anim.state, anim.frame, p.spindash_speed
+            "{:?}   speed {:5.2}   anim state {} frame {:4.1}   spin dash {:4.1}\n{:.0} fps   pose+mesh {:.1} ms\nWASD move  Space jump / homing  Shift spin dash  R reset",
+            p.action, speed, anim.state, anim.frame, p.spindash_speed,
+            diag.get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()).unwrap_or(0.0), pose_ms
         );
     }
 }

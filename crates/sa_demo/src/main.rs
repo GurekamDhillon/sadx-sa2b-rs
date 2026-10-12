@@ -46,6 +46,8 @@ struct Sim {
     start: Player,
     jump_pressed: bool,
     action_pressed: bool,
+    /// Position at the previous fixed step, for smoothing between steps.
+    prev_pos: SVec3,
 }
 
 /// Animation playback state.
@@ -89,12 +91,21 @@ fn main() {
 
     App::new()
         .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window { title: "sa-rewrite: Sonic controller demo".into(), ..default() }),
+        .add_plugins(bevy::diagnostic::LogDiagnosticsPlugin::default())
+        .add_plugins(DefaultPlugins.set(bevy::render::RenderPlugin {
+            render_creation: bevy::render::settings::WgpuSettings {
+                backends: Some(bevy::render::settings::Backends::VULKAN),
+                power_preference: bevy::render::settings::PowerPreference::HighPerformance,
+                ..default()
+            }
+            .into(),
+            ..default()
+        }).set(WindowPlugin {
+            primary_window: Some(Window { present_mode: if std::env::var("DEMO_NOVSYNC").is_ok() { bevy::window::PresentMode::AutoNoVsync } else { bevy::window::PresentMode::AutoVsync }, title: "sa-rewrite: Sonic controller demo".into(), ..default() }),
             ..default()
         }))
         .insert_resource(Time::<Fixed>::from_hz(60.0))
-        .insert_resource(Sim { start: player.clone(), player, world, jump_pressed: false, action_pressed: false })
+        .insert_resource(Sim { start: player.clone(), player, world, jump_pressed: false, action_pressed: false, prev_pos: SVec3::ZERO })
         .insert_resource(Anim { rig, state: state::STAND, frame: 0.0, spawned_model: None, spawned_submeshes: 0, textures: Vec::new() })
         .insert_resource(CamYaw(0.0))
         .insert_resource(AutoShot { dir: std::env::var("DEMO_SHOTS").map(Into::into).unwrap_or_default(), tick: 0 })
@@ -169,6 +180,7 @@ fn latch_buttons(keys: Res<ButtonInput<KeyCode>>, mut sim: ResMut<Sim>) {
     sim.action_pressed |= keys.just_pressed(KeyCode::ShiftLeft) || keys.just_pressed(KeyCode::ShiftRight);
     if keys.just_pressed(KeyCode::KeyR) {
         sim.player = sim.start.clone();
+        sim.prev_pos = sim.player.position;
     }
 }
 
@@ -191,6 +203,7 @@ fn step_player(keys: Res<ButtonInput<KeyCode>>, cam: Res<CamYaw>, shot: Res<Auto
         action_pressed: std::mem::take(&mut sim.action_pressed) || (scripted && spin && (30..33).contains(&shot.tick)),
         action_held: keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) || (scripted && spin && (30..90).contains(&shot.tick)),
     };
+    sim.prev_pos = sim.player.position;
     let Sim { player, world, .. } = &mut *sim;
     player.step(&input, world);
 
@@ -279,6 +292,7 @@ fn bevy_mesh(m: &SMesh, range: std::ops::Range<usize>) -> Mesh {
 #[allow(clippy::too_many_arguments)]
 fn sync_visuals(
     time: Res<Time>,
+    fixed: Res<Time<Fixed>>,
     sim: Res<Sim>,
     mut anim: ResMut<Anim>,
     mut cam_yaw: ResMut<CamYaw>,
@@ -294,7 +308,11 @@ fn sync_visuals(
 ) {
     let t0 = std::time::Instant::now();
     let p = &sim.player;
-    let pos = Vec3::new(p.position.x, p.position.y, p.position.z);
+    // Physics runs at 60 Hz; draw between the last two steps so motion and the
+    // camera stay smooth at any frame rate.
+    let a = fixed.overstep_fraction();
+    let lerp = |from: f32, to: f32| from + (to - from) * a;
+    let pos = Vec3::new(lerp(sim.prev_pos.x, p.position.x), lerp(sim.prev_pos.y, p.position.y), lerp(sim.prev_pos.z, p.position.z));
     // Draw rotation as SA2 does it (a half turn added to the heading).
     let [rx, ry, rz] = p.body.display_rotation().map(to_radians);
 
@@ -331,9 +349,9 @@ fn sync_visuals(
             for (part, handle) in &mut parts {
                 let Some(sm) = pose.submeshes.get(part.0) else { continue };
                 let range = sm.first_index as usize..(sm.first_index + sm.index_count) as usize;
-                if let Some(m) = meshes.get_mut(&handle.0) {
+                if std::env::var("DEMO_FREEZE").is_err() { if let Some(m) = meshes.get_mut(&handle.0) {
                     *m = bevy_mesh(&pose, range);
-                }
+                } }
             }
         }
     }

@@ -101,7 +101,7 @@ fn main() {
             .into(),
             ..default()
         }).set(WindowPlugin {
-            primary_window: Some(Window { present_mode: if std::env::var("DEMO_NOVSYNC").is_ok() { bevy::window::PresentMode::AutoNoVsync } else { bevy::window::PresentMode::AutoVsync }, title: "sa-rewrite: Sonic controller demo".into(), ..default() }),
+            primary_window: Some(Window { present_mode: if std::env::var("DEMO_NOVSYNC").is_ok() { bevy::window::PresentMode::Mailbox } else { bevy::window::PresentMode::AutoVsync }, title: "sa-rewrite: Sonic controller demo".into(), ..default() }),
             ..default()
         }))
         .insert_resource(Time::<Fixed>::from_hz(60.0))
@@ -169,8 +169,8 @@ fn setup(mut commands: Commands, mut anim: ResMut<Anim>, mut meshes: ResMut<Asse
         commands.spawn((Target(i), Mesh3d(ball.clone()), MeshMaterial3d(red.clone()), Transform::from_xyz(t[0], t[1], t[2])));
     }
 
-    commands.spawn((DirectionalLight { illuminance: 8000.0, shadows_enabled: true, ..default() }, bevy::pbr::CascadeShadowConfigBuilder { num_cascades: 1, maximum_distance: 150.0, ..default() }.build(), Transform::from_xyz(50.0, 100.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y)));
-    commands.spawn((Camera3d::default(), Msaa::Off, Transform::from_xyz(-40.0, 20.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y)));
+    commands.spawn((DirectionalLight { illuminance: 8000.0, shadows_enabled: true, ..default() }, bevy::pbr::CascadeShadowConfigBuilder { num_cascades: 3, maximum_distance: 250.0, ..default() }.build(), Transform::from_xyz(50.0, 100.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y)));
+    commands.spawn((Camera3d::default(), Msaa::Sample4, Transform::from_xyz(-40.0, 20.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y)));
     commands.spawn((Hud, Text::new(""), Node { position_type: PositionType::Absolute, top: Val::Px(8.0), left: Val::Px(8.0), ..default() }));
 }
 

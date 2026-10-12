@@ -176,7 +176,8 @@ fn step_player(keys: Res<ButtonInput<KeyCode>>, cam: Res<CamYaw>, shot: Res<Auto
     let down = |a: KeyCode, b: KeyCode| keys.pressed(a) || keys.pressed(b);
     let fwd = down(KeyCode::KeyW, KeyCode::ArrowUp) as i32 as f32 - down(KeyCode::KeyS, KeyCode::ArrowDown) as i32 as f32;
     let right = down(KeyCode::KeyD, KeyCode::ArrowRight) as i32 as f32 - down(KeyCode::KeyA, KeyCode::ArrowLeft) as i32 as f32;
-    let (fwd, right) = if scripted && shot.tick < 200 { (1.0, 0.0) } else { (fwd, right) };
+    let still = std::env::var("DEMO_VIEW").map(|v| v == "face").unwrap_or(false);
+    let (fwd, right) = if scripted && !still && shot.tick < 200 { (1.0, 0.0) } else { (fwd, right) };
     let mag = (fwd * fwd + right * right).sqrt().min(1.0);
     // Forward at yaw y is (cos y, 0, sin y); screen-right is +0x4000.
     let cam_bams = (cam.0 * 65536.0 / std::f32::consts::TAU) as i32;
@@ -260,10 +261,14 @@ fn advance_animation(sim: Res<Sim>, mut anim: ResMut<Anim>) {
     }
 }
 
+/// Ninja data lives in Direct3D's left-handed space; Bevy is right-handed. Mirroring
+/// Z (positions and normals) gives the character the right left/right sides while
+/// leaving forward (-X) and up (+Y) alone. Triangles are drawn double-sided, so
+/// the reversed winding does not matter.
 fn bevy_mesh(m: &SMesh, range: std::ops::Range<usize>) -> Mesh {
     let mut out = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
-    out.insert_attribute(Mesh::ATTRIBUTE_POSITION, m.positions.clone());
-    out.insert_attribute(Mesh::ATTRIBUTE_NORMAL, m.normals.clone());
+    out.insert_attribute(Mesh::ATTRIBUTE_POSITION, m.positions.iter().map(|p| [p[0], p[1], -p[2]]).collect::<Vec<_>>());
+    out.insert_attribute(Mesh::ATTRIBUTE_NORMAL, m.normals.iter().map(|n| [n[0], n[1], -n[2]]).collect::<Vec<_>>());
     out.insert_attribute(Mesh::ATTRIBUTE_UV_0, m.uvs.clone());
     out.insert_indices(Indices::U32(m.indices[range].to_vec()));
     out
@@ -303,12 +308,6 @@ fn sync_visuals(
                 }
             }
             for (i, sm) in pose.submeshes.iter().enumerate() {
-                // Reflection maps (`*_ref*`) are environment-mapping overlays in the game;
-                // without that mapping they would hide the face, so they are skipped.
-                let name = sm.texture_id.and_then(|t| anim.rig.textures.get(t as usize)).map(|t| t.0.as_str()).unwrap_or("");
-                if name.contains("_ref") {
-                    continue;
-                }
                 let range = sm.first_index as usize..(sm.first_index + sm.index_count) as usize;
                 let material = StandardMaterial {
                     base_color_texture: sm.texture_id.and_then(|t| anim.textures.get(t as usize).cloned()),
@@ -348,6 +347,8 @@ fn sync_visuals(
         // Scripted mode films from the side, close, so limbs can be inspected.
         let eye = if shot.dir.as_os_str().is_empty() {
             pos - fwd * 45.0 + Vec3::Y * 18.0
+        } else if std::env::var("DEMO_VIEW").map(|v| v == "face").unwrap_or(false) {
+            pos + fwd * 13.0 + Vec3::Y * 8.3 // in front of his face
         } else if std::env::var("DEMO_VIEW").map(|v| v == "back").unwrap_or(false) {
             pos - fwd * 26.0 + Vec3::Y * 8.0
         } else if std::env::var("DEMO_VIEW").map(|v| v == "front").unwrap_or(false) {

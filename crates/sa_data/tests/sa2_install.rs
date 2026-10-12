@@ -101,3 +101,17 @@ fn sonic_skin_stays_attached_in_every_pose() {
         }
     }
 }
+
+/// Regression: with the rotation order reversed both arms swing inward and
+/// the hands meet on the centreline, so the stand pose is only about ±1 wide.
+/// Correct poses hang the gloves outside the shoulders (±1.5 and beyond).
+#[test]
+fn sonic_arms_hang_outside_the_body_in_the_stand_pose() {
+    let g = game();
+    let rig = g.character_rig(Character::Sonic, Costume::Default).unwrap();
+    let mesh = rig.mesh(sa_data::anim::state::STAND, 0.0).unwrap();
+    let (lo, hi) = mesh.bounds().unwrap();
+    assert!(lo[2] < -1.4 && hi[2] > 1.4, "z extent {:.2}..{:.2}: arms are not out at the sides", lo[2], hi[2]);
+    // And roughly symmetric: neither side more than 1.6x the other.
+    assert!(hi[2] / -lo[2] < 1.6 && -lo[2] / hi[2] < 1.6, "lopsided: {:.2}..{:.2}", lo[2], hi[2]);
+}

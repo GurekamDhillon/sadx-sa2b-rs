@@ -69,17 +69,15 @@ impl Node {
         }
         if self.flags & eval::UNIT_ANG == 0 {
             let [x, y, z] = self.rotation.map(bams_to_radians);
-            // Ninja space is the right-handed one mirrored in Z, so its rotations
-            // about X and Y turn the opposite way (Z is unchanged). Found on
-            // Sonic: with plain right-handed angles both arms swing inward and
-            // the hands meet on the centreline; with this they hang outside the
-            // shoulders.
-            let (rx, ry, rz) = (Mat4::rot_x(-x), Mat4::rot_y(-y), Mat4::rot_z(z));
-            // njRotateXYZ post-multiplies X, then Y, then Z; the ZXY flag selects Z, X, Y.
+            // Ninja's njRotateX/Y/Z each PRE-multiply, and `RotateXYZ` calls Z, then Y,
+            // then X, so a point is rotated by X first, then Y, then Z (the ZXY flag
+            // calls Y, X, Z: Z first, then X, then Y). Angles are plain right-handed.
+            // (Checked against SA Tools' MatrixFunctions; an earlier "mirrored X/Y"
+            // guess only compensated for getting this order wrong.)
             m = if self.flags & eval::ZXY_ANG != 0 {
-                m.mul(&rz).mul(&rx).mul(&ry)
+                m.mul(&Mat4::rot_y(y)).mul(&Mat4::rot_x(x)).mul(&Mat4::rot_z(z))
             } else {
-                m.mul(&rx).mul(&ry).mul(&rz)
+                m.mul(&Mat4::rot_z(z)).mul(&Mat4::rot_y(y)).mul(&Mat4::rot_x(x))
             };
         }
         if self.flags & eval::UNIT_SCL == 0 {

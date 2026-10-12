@@ -1,8 +1,10 @@
 # Character models, skinning and animation (SA2 PC)
 
-How a character is drawn from the game's files. Everything here was checked
-against the real `sonicmdl.prs` / `plcommtn.prs` / `sonicmtn.prs` and the
-exe; the checks are tests in `crates/sa_data/tests/sa2_install.rs`.
+How a character is drawn from the game's files. Checked against the real
+`sonicmdl.prs` / `plcommtn.prs` / `sonicmtn.prs`, the exe, and SA Tools'
+renderer (`SAModel.Direct3D`: `MatrixFunctions`, `ProcessWeightedChunkModel`),
+which displays these models correctly. The checks are tests in
+`crates/sa_data/tests/sa2_install.rs`.
 
 ## Files
 
@@ -21,36 +23,40 @@ exe; the checks are tests in `crates/sa_data/tests/sa2_install.rs`.
    rotate Z, rotate X, then rotate Y by **`0x8000 − heading`**. The half turn
    is why the model faces the opposite way to the physics forward axis
    (`Body::display_rotation`).
-2. **Node transform**: `T · Rx · Ry · Rz · S` (Z·X·Y with the `ZXY_ANG` flag),
-   angles are BAMS (0x10000 = turn). Ninja space is the right-handed one
-   mirrored in Z, so rotations about **X and Y turn the opposite way** to
-   right-handed math (Z does not): `rot_x(-x)`, `rot_y(-y)`, `rot_z(z)`.
-   - Z sign: both copies of each weighted vertex coincide at rest (median
-     0.026 units; 0.27 with the opposite Z sign).
-   - X and Y signs: invisible at rest (those angles are tiny) and found from
-     a pose. With plain right-handed angles both arms swing inward and the
-     hands meet on the centreline (z ≈ 0.1); with the mirrored convention
-     they hang outside their shoulders (z +1.5 and −1.4 against shoulders at
-     +0.8 and −0.65). Do not test this on animated poses with the
-     coincidence check: animated weighted vertices are *meant* to differ.
+2. **Node transform**: `T · R · S`, angles in BAMS (0x10000 = turn), plain
+   right-handed rotations. Each `njRotate*` call *pre*-multiplies and
+   `RotateXYZ` calls Z, then Y, then X, so a point is rotated by **X first,
+   then Y, then Z**; with the `ZXY_ANG` flag it is Z first, then X, then Y.
+   - Rest pose: both copies of each weighted vertex coincide (median 0.026
+     units), which also confirms the Z sign.
+   - Stand pose: both hands hang outside their shoulders (z +1.74 / −1.53
+     against shoulders at +0.82 / −0.65). With the order reversed, the arms
+     swing inward and the hands meet on the centreline.
+   - Lesson: a wrong rotation *order* looks like a wrong *sign* at rest,
+     because X and Y angles are tiny there. Do not test conventions on animated
+     poses with the coincidence check: animated weighted vertices are
+     *meant* to differ.
 3. **Extra root nodes**: a 62-node motion drives a skeleton whose first two
    nodes (an empty root and the 5.24-unit hip height) exist only in the
    skeleton model; body models start below them (`pose::with_prefix`).
-4. **Skinning** (chunk vertex cache, `flatten.rs`):
-   - A node's vertex chunks write cache slots (already transformed by that
-     node). Plain chunks set a slot; weighted chunks carry weight in the high
-     16 bits of the "ninja flags" word and the slot in the low 16 plus the
-     chunk's index offset. Status is the low two bits of the chunk flags:
-     Start (0) sets, Middle (1) and End (2) add.
-   - A node with vertices *and* polygons is drawn at once.
-   - A polygon-only "skin" node is drawn at the first moment **every slot it
-     uses has been rewritten since the node was entered and no blend into it
-     is still open**. Found by replaying the cache over every model and
-     choosing, per skin node, the moment with the least-stretched triangles;
-     drawing on entry or after the whole subtree stretches the body (edges up
-     to 6.9 units on a 10-unit character, versus 1.8 with this rule).
-     Slot numbers are reused by later subtrees (the second arm rewrites the
-     first arm's slots), so draw time matters.
+4. **Skinning** (one vertex cache for the whole tree, `flatten.rs`):
+   - Entering a node writes its vertex chunks, already transformed by that
+     node. Plain chunks set a slot; weighted chunks carry the weight in the
+     high 16 bits of the "ninja flags" word (`/255`) and the slot in the low
+     16 plus the chunk's index offset. Status is the low two bits of the chunk
+     flags: Start (0) sets the slot, Middle (1) and End (2) add to it.
+   - Polygon lists are explicit: a `Bits` chunk of type 4 *caches* the rest of
+     its list under the number in its flags byte, and a `Bits` chunk of type 5
+     in any node *draws* that cached list against the cache as it is at that
+     moment. Sonic's skin nodes (1, 11, 21, 35, 54) cache; nodes 33, 14, 24, 39
+     and 58 draw. Slot numbers are reused by later subtrees (the second arm
+     rewrites the first arm's slots), so the draw moment matters: any other
+     order stretches the body (edges up to 6.9 units on a 10-unit character;
+     1.8 with the real order). The texture chosen by a texture chunk stays in
+     effect across lists and nodes.
+   - Strips flagged `0x40` are environment mapped: UVs come from the vertex
+     normal (`u = nx/2 + 0.5`, `v = 0.5 − ny/2`). Sonic's eye whites are such
+     a strip set over `stx_ref00`; the irises are ordinary strips on `stx_00`.
 
 ## Playing animations
 
@@ -61,11 +67,14 @@ exe; the checks are tests in `crates/sa_data/tests/sa2_install.rs`.
 
 ## Known display issues
 
-- Reflection overlay textures (`*_ref*`, e.g. `stx_ref00`) are environment-mapped
-  in the game; the demo skips them, so chrome highlights are missing.
-- Ninja data is used as-is in a right-handed viewer, so the character is a
-  mirror image of the in-game one (asymmetric details such as logos are
-  flipped). The skeleton itself is consistent.
+- Ninja data is in Direct3D's left-handed space. The demo mirrors Z when it
+  hands a model to Bevy (right-handed) so left and right come out correctly.
+  This was inferred from SA Tools' renderer, not compared side by side with
+  the game.
+- Environment-mapped strips use model-space normals, so the chrome highlight
+  does not follow the camera as the game's view-space mapping does.
+- Texture chunk flags (clamp, flip, filter) and material blend/alpha state
+  are parsed only partly; everything is drawn opaque with a 0.5 alpha cutoff.
 
 ## Not done
 

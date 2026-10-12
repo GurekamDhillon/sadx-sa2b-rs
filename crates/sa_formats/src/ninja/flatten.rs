@@ -78,92 +78,48 @@ struct CacheVertex {
 
 /// Flattens `root` in whatever pose its node transforms describe.
 ///
-/// Chunk models skin across nodes through a shared vertex cache. A node's
-/// vertex chunks are written (already transformed by that node) when the node
-/// is entered. A node with both vertices and polygons is drawn at once. A
-/// polygon-only "skin" node is drawn at the first moment every slot it uses
-/// has been written and no weighted blend into it is still open (Start or
-/// Middle seen, End not yet). Chosen by replaying the cache over
-/// `sonicmdl.prs`: it picks the least-stretched moment for every skin node,
-/// where drawing on entry or after the whole subtree does not.
+/// Chunk models share one vertex cache across the whole tree: entering a node
+/// writes its vertex chunks (already transformed by that node) into it.
+/// Polygon lists are explicit. A `Bits` chunk of type 4 *caches* the rest of
+/// its list under a number instead of drawing it, and a type 5 chunk in any
+/// node *draws* a cached list from the cache as it stands at that moment;
+/// this is how skin polygons are drawn only after the bones they blend
+/// between have written their vertices. The texture set by a texture chunk
+/// stays in effect across lists and nodes. Behaviour matches SA Tools'
+/// weighted chunk renderer, which shows these models correctly.
 pub fn flatten(root: &Node) -> Mesh {
-    let mut ctx = Ctx { mesh: Mesh::default(), cache: Vec::new(), state: Vec::new(), clock: 0, pending: Vec::new() };
+    let mut ctx = Ctx { mesh: Mesh::default(), cache: Vec::new(), lists: vec![None; 256], texture: None, clock: 0 };
     visit(root, &Mat4::IDENTITY, &mut ctx);
-    ctx.flush(true);
     ctx.mesh
 }
 
-/// Cache slot state: never written, blend still open, final.
-const UNWRITTEN: u8 = 0;
-const OPEN: u8 = 1;
-const FINAL: u8 = 2;
-
-struct Skin<'a> {
-    model: &'a ChunkModel,
-    world: Mat4,
-    slots: Vec<usize>,
-    /// Value of `Ctx::clock` when the node was entered.
-    entered: u32,
-}
+type CachedList<'a> = Option<(&'a ChunkModel, usize, Mat4)>;
 
 struct Ctx<'a> {
     mesh: Mesh,
     cache: Vec<CacheVertex>,
-    /// Per slot: state (`UNWRITTEN`/`OPEN`/`FINAL`) and the clock of its last write.
-    state: Vec<(u8, u32)>,
+    /// Cached polygon lists: (model, index of the chunk after the cache command, node transform).
+    lists: Vec<CachedList<'a>>,
+    texture: Option<u32>,
     clock: u32,
-    pending: Vec<Skin<'a>>,
-}
-
-impl<'a> Ctx<'a> {
-    /// Draws pending skin nodes whose slots have all been rewritten since the
-    /// node was entered and are final (all of them if `force`).
-    fn flush(&mut self, force: bool) {
-        let mut i = 0;
-        while i < self.pending.len() {
-            let entered = self.pending[i].entered;
-            let ready = force || self.pending[i].slots.iter().all(|&s| matches!(self.state.get(s), Some(&(FINAL, at)) if at > entered));
-            if ready {
-                let s = self.pending.remove(i);
-                self.mesh.cur_node = s.entered;
-                chunk_polys(&mut self.mesh, &self.cache, s.model, &s.world);
-            } else {
-                i += 1;
-            }
-        }
-    }
-}
-
-fn strip_slots(m: &ChunkModel) -> Vec<usize> {
-    let mut v: Vec<usize> = m.poly_chunks.iter().filter_map(|p| if let PolyChunk::Strip { strips, .. } = p { Some(strips) } else { None }).flatten().flat_map(|s| s.vertices.iter().map(|v| v.index as usize)).collect();
-    v.sort_unstable();
-    v.dedup();
-    v
 }
 
 fn visit<'a>(node: &'a Node, parent: &Mat4, ctx: &mut Ctx<'a>) {
     let world = parent.mul(&node.local_matrix());
     let hidden = node.flags & eval::HIDE != 0;
     ctx.clock += 1;
-    let entered = ctx.clock;
+    ctx.mesh.cur_node = ctx.clock;
     match &node.attach {
         Some(Attach::Chunk(m)) => {
-            chunk_vertices(&mut ctx.cache, &mut ctx.state, ctx.clock, m, &world);
-            let has_polys = m.poly_chunks.iter().any(|p| matches!(p, PolyChunk::Strip { .. }));
-            if has_polys && !hidden {
-                if m.vertex_chunks.is_empty() {
-                    ctx.pending.push(Skin { model: m, world, slots: strip_slots(m), entered });
-                } else {
-                    ctx.mesh.cur_node = entered;
-                    chunk_polys(&mut ctx.mesh, &ctx.cache, m, &world);
-                }
+            chunk_vertices(&mut ctx.cache, m, &world);
+            if !hidden {
+                run_list(ctx, m, 0, &world, 0);
             }
         }
         Some(Attach::Basic(m)) if !hidden => basic(&mut ctx.mesh, m, &world),
         Some(Attach::Gc(m)) if !hidden => gc(&mut ctx.mesh, m, &world),
         _ => {}
     }
-    ctx.flush(false);
     if node.flags & eval::BREAK == 0 {
         for c in &node.children {
             visit(c, &world, ctx);
@@ -171,7 +127,7 @@ fn visit<'a>(node: &'a Node, parent: &Mat4, ctx: &mut Ctx<'a>) {
     }
 }
 
-fn chunk_vertices(cache: &mut Vec<CacheVertex>, state: &mut Vec<(u8, u32)>, clock: u32, m: &ChunkModel, world: &Mat4) {
+fn chunk_vertices(cache: &mut Vec<CacheVertex>, m: &ChunkModel, world: &Mat4) {
     for vc in &m.vertex_chunks {
         let ws = vc.weight_status();
         for (i, v) in vc.vertices.iter().enumerate() {
@@ -181,15 +137,7 @@ fn chunk_vertices(cache: &mut Vec<CacheVertex>, state: &mut Vec<(u8, u32)>, cloc
             };
             if slot >= cache.len() {
                 cache.resize(slot + 1, CacheVertex::default());
-                state.resize(slot + 1, (UNWRITTEN, 0));
             }
-            state[slot] = (
-                match ws {
-                    Some(WeightStatus::Start) | Some(WeightStatus::Middle) => OPEN,
-                    _ => FINAL,
-                },
-                clock,
-            );
             let p = world.point(v.position);
             let n = world.normal(v.normal.unwrap_or([0., 1., 0.]));
             let e = &mut cache[slot];
@@ -209,25 +157,47 @@ fn chunk_vertices(cache: &mut Vec<CacheVertex>, state: &mut Vec<(u8, u32)>, cloc
     }
 }
 
-fn chunk_polys(mesh: &mut Mesh, cache: &[CacheVertex], m: &ChunkModel, world: &Mat4) {
-    let mut texture = None;
-    for pc in &m.poly_chunks {
-        match pc {
-            PolyChunk::Texture { texture_id, .. } => texture = Some(*texture_id as u32),
-            PolyChunk::Strip { strips, .. } => {
-                mesh.begin(texture);
+/// Strip flag: UVs come from the vertex normal (environment / sphere map).
+const STRIP_ENV_MAP: u8 = 0x40;
+
+fn normalized(n: [f32; 3]) -> [f32; 3] {
+    let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+    if l > 0.0 { [n[0] / l, n[1] / l, n[2] / l] } else { n }
+}
+
+/// Runs the polygon chunks of `m` from `start` until the list ends or caches itself.
+fn run_list<'a>(ctx: &mut Ctx<'a>, m: &'a ChunkModel, start: usize, world: &Mat4, depth: u32) {
+    for i in start..m.poly_chunks.len() {
+        match &m.poly_chunks[i] {
+            PolyChunk::Bits { kind: 4, flags } => {
+                ctx.lists[*flags as usize] = Some((m, i + 1, *world));
+                return;
+            }
+            PolyChunk::Bits { kind: 5, flags } => {
+                if depth < 8 {
+                    if let Some((cm, ci, cw)) = ctx.lists[*flags as usize] {
+                        run_list(ctx, cm, ci, &cw, depth + 1);
+                    }
+                }
+            }
+            PolyChunk::Texture { texture_id, .. } => ctx.texture = Some(*texture_id as u32),
+            PolyChunk::Strip { flags, strips, .. } => {
+                ctx.mesh.begin(ctx.texture);
+                let env = flags & STRIP_ENV_MAP != 0;
                 for s in strips {
                     let ids: Vec<u32> = s
                         .vertices
                         .iter()
                         .map(|sv| {
-                            let c = cache.get(sv.index as usize).copied().unwrap_or_default();
-                            let id = mesh.push(c.pos, sv.normal.map(|n| world.normal(n)).unwrap_or(c.normal), sv.uv.unwrap_or([0., 0.]));
-                            mesh.src_slot[id as usize] = sv.index as u32;
+                            let c = ctx.cache.get(sv.index as usize).copied().unwrap_or_default();
+                            let n = normalized(sv.normal.map(|n| world.normal(n)).unwrap_or(c.normal));
+                            let uv = if env { [n[0] * 0.5 + 0.5, 0.5 - n[1] * 0.5] } else { sv.uv.unwrap_or([0., 0.]) };
+                            let id = ctx.mesh.push(c.pos, n, uv);
+                            ctx.mesh.src_slot[id as usize] = sv.index as u32;
                             id
                         })
                         .collect();
-                    strip_tris(mesh, &ids, s.reversed);
+                    strip_tris(&mut ctx.mesh, &ids, s.reversed);
                 }
             }
             _ => {}

@@ -303,6 +303,12 @@ fn sync_visuals(
                 }
             }
             for (i, sm) in pose.submeshes.iter().enumerate() {
+                // Reflection maps (`*_ref*`) are environment-mapping overlays in the game;
+                // without that mapping they would hide the face, so they are skipped.
+                let name = sm.texture_id.and_then(|t| anim.rig.textures.get(t as usize)).map(|t| t.0.as_str()).unwrap_or("");
+                if name.contains("_ref") {
+                    continue;
+                }
                 let range = sm.first_index as usize..(sm.first_index + sm.index_count) as usize;
                 let material = StandardMaterial {
                     base_color_texture: sm.texture_id.and_then(|t| anim.textures.get(t as usize).cloned()),
@@ -340,7 +346,15 @@ fn sync_visuals(
     let fwd = Vec3::new(cam_yaw.0.cos(), 0.0, cam_yaw.0.sin());
     if let Ok(mut c) = camera.single_mut() {
         // Scripted mode films from the side, close, so limbs can be inspected.
-        let eye = if shot.dir.as_os_str().is_empty() { pos - fwd * 45.0 + Vec3::Y * 18.0 } else { pos + Vec3::new(-fwd.z, 0.0, fwd.x) * 24.0 + Vec3::Y * 5.0 };
+        let eye = if shot.dir.as_os_str().is_empty() {
+            pos - fwd * 45.0 + Vec3::Y * 18.0
+        } else if std::env::var("DEMO_VIEW").map(|v| v == "back").unwrap_or(false) {
+            pos - fwd * 26.0 + Vec3::Y * 8.0
+        } else if std::env::var("DEMO_VIEW").map(|v| v == "front").unwrap_or(false) {
+            pos + fwd * 26.0 + Vec3::Y * 8.0
+        } else {
+            pos + Vec3::new(-fwd.z, 0.0, fwd.x) * 24.0 + Vec3::Y * 5.0
+        };
         c.translation = c.translation.lerp(eye, (1.0 - (-8.0 * time.delta_secs()).exp()).min(1.0));
         c.look_at(pos + Vec3::Y * 6.0, Vec3::Y);
     }

@@ -20,6 +20,9 @@ pub struct SubMesh {
 pub struct Mesh {
     /// Diagnostics: cache slot each vertex was read from (`u32::MAX` if none).
     pub src_slot: Vec<u32>,
+    /// Diagnostics: 1-based preorder index of the node whose polygons produced each vertex.
+    pub src_node: Vec<u32>,
+    cur_node: u32,
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
@@ -46,6 +49,7 @@ impl Mesh {
 
     fn push(&mut self, p: [f32; 3], n: [f32; 3], uv: [f32; 2]) -> u32 {
         self.src_slot.push(u32::MAX);
+        self.src_node.push(self.cur_node);
         self.positions.push(p);
         self.normals.push(n);
         self.uvs.push(uv);
@@ -121,6 +125,7 @@ impl<'a> Ctx<'a> {
             let ready = force || self.pending[i].slots.iter().all(|&s| matches!(self.state.get(s), Some(&(FINAL, at)) if at > entered));
             if ready {
                 let s = self.pending.remove(i);
+                self.mesh.cur_node = s.entered;
                 chunk_polys(&mut self.mesh, &self.cache, s.model, &s.world);
             } else {
                 i += 1;
@@ -149,6 +154,7 @@ fn visit<'a>(node: &'a Node, parent: &Mat4, ctx: &mut Ctx<'a>) {
                 if m.vertex_chunks.is_empty() {
                     ctx.pending.push(Skin { model: m, world, slots: strip_slots(m), entered });
                 } else {
+                    ctx.mesh.cur_node = entered;
                     chunk_polys(&mut ctx.mesh, &ctx.cache, m, &world);
                 }
             }

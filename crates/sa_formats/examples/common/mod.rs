@@ -11,6 +11,7 @@ pub fn render_rgb(mesh: &sa_formats::ninja::Mesh, w: usize, h: usize, top: bool,
     let mut img = vec![30u8; w * h * 3];
     let mut zb = vec![f32::MIN; w * h];
     let side = std::env::var("VIEW").map(|v| v == "side").unwrap_or(false);
+    let top = top || std::env::var("VIEW").map(|v| v == "top").unwrap_or(false);
     let pick = |p: [f32; 3]| if top { [p[0], -p[2], p[1]] } else if side { [-p[2], p[1], p[0]] } else { p };
     let mut tri_color = vec![[200u8, 200, 190]; mesh.indices.len() / 3];
     let palette = [[230u8, 90, 80], [90, 200, 110], [90, 140, 240], [240, 210, 80], [200, 110, 230], [90, 220, 220], [250, 150, 60], [180, 180, 180]];

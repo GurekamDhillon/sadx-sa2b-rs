@@ -22,9 +22,17 @@ exe; the checks are tests in `crates/sa_data/tests/sa2_install.rs`.
    is why the model faces the opposite way to the physics forward axis
    (`Body::display_rotation`).
 2. **Node transform**: `T · Rx · Ry · Rz · S` (Z·X·Y with the `ZXY_ANG` flag),
-   angles are BAMS (0x10000 = turn), positive sign. Checked by transforming
-   both copies of each weighted vertex and measuring the gap: median 0.026
-   units with this convention, 0.27 with the opposite sign.
+   angles are BAMS (0x10000 = turn). Ninja space is the right-handed one
+   mirrored in Z, so rotations about **X and Y turn the opposite way** to
+   right-handed math (Z does not): `rot_x(-x)`, `rot_y(-y)`, `rot_z(z)`.
+   - Z sign: both copies of each weighted vertex coincide at rest (median
+     0.026 units; 0.27 with the opposite Z sign).
+   - X and Y signs: invisible at rest (those angles are tiny) and found from
+     a pose. With plain right-handed angles both arms swing inward and the
+     hands meet on the centreline (z ≈ 0.1); with the mirrored convention
+     they hang outside their shoulders (z +1.5 and −1.4 against shoulders at
+     +0.8 and −0.65). Do not test this on animated poses with the
+     coincidence check: animated weighted vertices are *meant* to differ.
 3. **Extra root nodes**: a 62-node motion drives a skeleton whose first two
    nodes (an empty root and the 5.24-unit hip height) exist only in the
    skeleton model; body models start below them (`pose::with_prefix`).
@@ -50,6 +58,14 @@ exe; the checks are tests in `crates/sa_data/tests/sa2_install.rs`.
   8 jog, 9 run, 10 sprint, 11 spin dash, 30 ball, 65–68 jump, 100 homing).
 - Run cycles advance by `anim_speed × ground speed` per frame; other states
   by `anim_speed`. Table modes 4, 6, 9 play once and hold (inferred).
+
+## Known display issues
+
+- Reflection overlay textures (`*_ref*`, e.g. `stx_ref00`) are environment-mapped
+  in the game; the demo skips them, so chrome highlights are missing.
+- Ninja data is used as-is in a right-handed viewer, so the character is a
+  mirror image of the in-game one (asymmetric details such as logos are
+  flipped). The skeleton itself is consistent.
 
 ## Not done
 
